@@ -332,29 +332,49 @@ export default function Overshare() {
     }
   };
 
- const listenToSession = (sessionCode) => {
-  console.log('Setting up listener for session:', sessionCode); // Debug log
+const listenToSession = (sessionCode) => {
+  console.log('Setting up listener for session:', sessionCode);
+  
+  // Clean up any existing listener first
+  if (sessionListener) {
+    console.log('Cleaning up old listener');
+    sessionListener();
+  }
   
   const sessionRef = doc(db, 'sessions', sessionCode);
-  const unsubscribe = onSnapshot(sessionRef, (doc) => {
-    console.log('Received session update:', doc.data()); // Debug log
-    
-    if (doc.exists()) {
-      const data = doc.data();
-      console.log('Players in session:', data.players); // Debug log
+  
+  const unsubscribe = onSnapshot(
+    sessionRef,
+    {
+      includeMetadataChanges: true  // This ensures we get all changes
+    },
+    (doc) => {
+      console.log('🔥 Firebase listener triggered!', {
+        exists: doc.exists(),
+        data: doc.data(),
+        hasPendingWrites: doc.metadata.hasPendingWrites,
+        fromCache: doc.metadata.fromCache
+      });
       
-      setPlayers(data.players || []);
-      setCurrentQuestion(data.currentQuestion || '');
-      setCurrentCategory(data.currentCategory || '');
-      setSelectedCategories(data.selectedCategories || []);
-      
-      if (data.gameState === 'playing' && gameState !== 'playing') {
-        setGameState('playing');
+      if (doc.exists()) {
+        const data = doc.data();
+        console.log('Players in session:', data.players);
+        console.log('Current players state before update:', players);
+        
+        setPlayers(data.players || []);
+        setCurrentQuestion(data.currentQuestion || '');
+        setCurrentCategory(data.currentCategory || '');
+        setSelectedCategories(data.selectedCategories || []);
+        
+        if (data.gameState === 'playing' && gameState !== 'playing') {
+          setGameState('playing');
+        }
       }
+    },
+    (error) => {
+      console.error('❌ Listener error:', error);
     }
-  }, (error) => {
-    console.error('Listener error:', error); // Error handling
-  });
+  );
   
   setSessionListener(unsubscribe);
   return unsubscribe;
