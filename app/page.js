@@ -490,7 +490,6 @@ const handleSurveySubmit = () => {
     await updateGameQuestion(sessionCode, question, currentCategory);
     setCurrentQuestion(question);
   };
-
   // Welcome Screen
   if (gameState === 'welcome') {
     return (
