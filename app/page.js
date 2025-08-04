@@ -176,7 +176,7 @@ export default function Overshare() {
     }
   };
 
-  // Smart category recommendation based on group composition and survey answers
+// Smart category recommendation based on group composition and survey answers
   const recommendCategories = (players, relationships) => {
     const intimacyScore = calculateGroupIntimacy(relationships);
     const comfortLevel = getGroupComfortLevel(players);
@@ -361,7 +361,7 @@ export default function Overshare() {
     };
   }, [sessionListener]);
 
-  const handleSurveySubmit = () => {
+const handleSurveySubmit = () => {
     if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
       setGameState('createOrJoin');
     }
@@ -473,7 +473,7 @@ export default function Overshare() {
     setCurrentQuestion(question);
   };
 
-  // Welcome Screen
+// Welcome Screen
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -519,7 +519,176 @@ export default function Overshare() {
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
             <div className="mb-6">
               <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Choose Your Question Style</h2>
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Perfect, {playerName}!</h2>
+              <p className="text-gray-600">We'll use this to create personalized questions for your group.</p>
+            </div>
+            
+            <button
+              onClick={handleSurveySubmit}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-gray-500">Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}</span>
+              <div className="w-16 h-2 bg-gray-200 rounded-full">
+                <div 
+                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                  style={{ width: `${((currentQuestionIndex + 1) / initialSurveyQuestions.length) * 100}%` }}
+                ></div>
+              </div>
+            </div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-6">{currentSurveyQuestion.question}</h2>
+          </div>
+          
+          <div className="space-y-3">
+            {currentSurveyQuestion.options.map((option, index) => (
+              <button
+                key={index}
+                onClick={() => {
+                  setSurveyAnswers({
+                    ...surveyAnswers,
+                    [currentSurveyQuestion.id]: option
+                  });
+                }}
+                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Create or Join Screen
+  if (gameState === 'createOrJoin') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6">Ready to play, {playerName}!</h2>
+          
+          <div className="space-y-4">
+            <button
+              onClick={handleCreateSession}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
+            >
+              <Users className="w-5 h-5 mr-2" />
+              Create New Game
+            </button>
+            
+            <div className="flex items-center my-4">
+              <div className="flex-1 h-px bg-gray-300"></div>
+              <span className="px-4 text-gray-500 text-sm">or</span>
+              <div className="flex-1 h-px bg-gray-300"></div>
+            </div>
+            
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder="Enter session code"
+                value={sessionCode}
+                onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
+                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono"
+              />
+              <button
+                onClick={handleJoinSession}
+                disabled={!sessionCode.trim()}
+                className="w-full bg-white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Join Game
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Relationship Survey Screen
+  if (gameState === 'relationshipSurvey') {
+    const currentPlayerIndex = Object.keys(relationshipAnswers).length;
+    const currentPlayer = players[currentPlayerIndex];
+    
+    if (currentPlayerIndex >= players.length) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+            <div className="mb-6">
+              <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Great!</h2>
+              <p className="text-gray-600">Now let's choose what types of questions you want to explore.</p>
+            </div>
+            
+            <button
+              onClick={handleRelationshipSurveySubmit}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {players.length}</span>
+              <div className="w-16 h-2 bg-gray-200 rounded-full">
+                <div 
+                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                  style={{ width: `${((currentPlayerIndex + 1) / players.length) * 100}%` }}
+                ></div>
+              </div>
+            </div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">How are you connected to {currentPlayer?.name}?</h2>
+            <p className="text-gray-600 text-sm">This helps us create better questions for your group.</p>
+          </div>
+          
+          <div className="space-y-3">
+            {relationshipOptions.map((option, index) => (
+              <button
+                key={index}
+                onClick={() => {
+                  setRelationshipAnswers({
+                    ...relationshipAnswers,
+                    [currentPlayer.name]: option
+                  });
+                }}
+                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+// Category Selection Screen
+  if (gameState === 'categorySelection') {
+    const recommended = recommendCategories(players, relationshipAnswers);
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Choose Your Question Style</h2>
             <p className="text-gray-600">Select the types of questions you want (you can pick multiple)</p>
           </div>
           
@@ -702,173 +871,4 @@ export default function Overshare() {
   }
 
   return null;
-}-800 mb-2">Perfect, {playerName}!</h2>
-              <p className="text-gray-600">We'll use this to create personalized questions for your group.</p>
-            </div>
-            
-            <button
-              onClick={handleSurveySubmit}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}</span>
-              <div className="w-16 h-2 bg-gray-200 rounded-full">
-                <div 
-                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
-                  style={{ width: `${((currentQuestionIndex + 1) / initialSurveyQuestions.length) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-6">{currentSurveyQuestion.question}</h2>
-          </div>
-          
-          <div className="space-y-3">
-            {currentSurveyQuestion.options.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => {
-                  setSurveyAnswers({
-                    ...surveyAnswers,
-                    [currentSurveyQuestion.id]: option
-                  });
-                }}
-                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Create or Join Screen
-  if (gameState === 'createOrJoin') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">Ready to play, {playerName}!</h2>
-          
-          <div className="space-y-4">
-            <button
-              onClick={handleCreateSession}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
-            >
-              <Users className="w-5 h-5 mr-2" />
-              Create New Game
-            </button>
-            
-            <div className="flex items-center my-4">
-              <div className="flex-1 h-px bg-gray-300"></div>
-              <span className="px-4 text-gray-500 text-sm">or</span>
-              <div className="flex-1 h-px bg-gray-300"></div>
-            </div>
-            
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="Enter session code"
-                value={sessionCode}
-                onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono"
-              />
-              <button
-                onClick={handleJoinSession}
-                disabled={!sessionCode.trim()}
-                className="w-full bg-white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Join Game
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Relationship Survey Screen
-  if (gameState === 'relationshipSurvey') {
-    const currentPlayerIndex = Object.keys(relationshipAnswers).length;
-    const currentPlayer = players[currentPlayerIndex];
-    
-    if (currentPlayerIndex >= players.length) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-            <div className="mb-6">
-              <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Great!</h2>
-              <p className="text-gray-600">Now let's choose what types of questions you want to explore.</p>
-            </div>
-            
-            <button
-              onClick={handleRelationshipSurveySubmit}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {players.length}</span>
-              <div className="w-16 h-2 bg-gray-200 rounded-full">
-                <div 
-                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
-                  style={{ width: `${((currentPlayerIndex + 1) / players.length) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">How are you connected to {currentPlayer?.name}?</h2>
-            <p className="text-gray-600 text-sm">This helps us create better questions for your group.</p>
-          </div>
-          
-          <div className="space-y-3">
-            {relationshipOptions.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => {
-                  setRelationshipAnswers({
-                    ...relationshipAnswers,
-                    [currentPlayer.name]: option
-                  });
-                }}
-                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Category Selection Screen
-  if (gameState === 'categorySelection') {
-    const recommended = recommendCategories(players, relationshipAnswers);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6 text-center">
-            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray
+}
