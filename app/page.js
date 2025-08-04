@@ -379,15 +379,21 @@ const handleSurveySubmit = () => {
     
     const success = await createFirebaseSession(code, hostPlayer);
     
-    if (success) {
-      setSessionCode(code);
-      setIsHost(true);
-      setPlayers([hostPlayer]);
-      setGameState('categorySelection');
-      
-      // Start listening to session updates
-      listenToSession(code);
-    } else {
+   if (success) {
+  setSessionCode(code);
+  setIsHost(true);
+  setPlayers([hostPlayer]);
+  
+  // Start listening BEFORE changing state
+  listenToSession(code);
+  
+  // Small delay to ensure listener is active
+  setTimeout(() => {
+    setGameState('categorySelection');
+  }, 500);
+}
+    
+    else {
       alert('Failed to create session. Please try again.');
     }
   };
