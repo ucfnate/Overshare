@@ -378,6 +378,12 @@ useEffect(() => {
   };
 }, []);
 
+const handleSurveySubmit = () => {
+  if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
+    setGameState('createOrJoin');
+  }
+};
+
 const handleCreateSession = async () => {
   const code = Math.random().toString(36).substring(2, 8).toUpperCase();
   const hostPlayer = {
