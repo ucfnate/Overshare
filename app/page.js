@@ -176,34 +176,699 @@ export default function Overshare() {
     }
   };
 
-  // Firebase and game logic functions would go here...
-  // (Keeping this shorter for now due to the error)
+  // Smart category recommendation based on group composition and survey answers
+  const recommendCategories = (players, relationships) => {
+    const intimacyScore = calculateGroupIntimacy(relationships);
+    const comfortLevel = getGroupComfortLevel(players);
+    const groupSize = players.length;
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-        <div className="mb-6">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
-            <MessageCircle className="w-8 h-8 text-white" />
+    let recommended = [];
+
+    // Always include icebreakers for groups > 3 or low intimacy
+    if (groupSize > 3 || intimacyScore < 3) {
+      recommended.push('icebreakers');
+    }
+
+    // Add creative for mixed groups
+    if (groupSize > 2) {
+      recommended.push('creative');
+    }
+
+    // Add deep dive for close relationships and high comfort
+    if (intimacyScore >= 3 && comfortLevel >= 3) {
+      recommended.push('deep_dive');
+    }
+
+    // Add growth for couples or very close friends
+    if (intimacyScore >= 4 || (groupSize === 2 && intimacyScore >= 3)) {
+      recommended.push('growth');
+    }
+
+    // Only suggest spicy for very comfortable groups
+    if (intimacyScore >= 4 && comfortLevel >= 4 && groupSize <= 4) {
+      recommended.push('spicy');
+    }
+
+    return recommended;
+  };
+
+  const calculateGroupIntimacy = (relationships) => {
+    if (!relationships || Object.keys(relationships).length === 0) return 2;
+    
+    const intimacyMap = {
+      'Romantic partner/spouse': 5,
+      'Close friend (know each other well)': 4,
+      'Friend (hang out regularly)': 3,
+      'Family member': 4,
+      'Coworker/colleague': 2,
+      'Acquaintance (don\'t know well)': 1,
+      'Just met/new friend': 1
+    };
+
+    const scores = Object.values(relationships).map(rel => intimacyMap[rel] || 2);
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  };
+
+  const getGroupComfortLevel = (players) => {
+    if (!players || players.length === 0) return 2;
+    
+    const comfortMap = {
+      'Light, fun topics that make everyone laugh': 2,
+      'Mix of light and meaningful discussions': 3,
+      'Deep, personal conversations': 4,
+      'Thought-provoking questions about life': 4
+    };
+
+    const scores = players
+      .filter(p => p.surveyAnswers?.comfort_level)
+      .map(p => comfortMap[p.surveyAnswers.comfort_level] || 2);
+    
+    if (scores.length === 0) return 2;
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  };
+
+  // Enhanced question generation with category logic
+  const generatePersonalizedQuestion = (players, surveyData, relationships, forceCategory = null) => {
+    let category = forceCategory;
+    
+    if (!category) {
+      // If no categories selected, pick one intelligently
+      if (selectedCategories.length === 0) {
+        const recommended = recommendCategories(players, relationships);
+        category = recommended[Math.floor(Math.random() * recommended.length)] || 'icebreakers';
+      } else {
+        // Pick from selected categories
+        category = selectedCategories[Math.floor(Math.random() * selectedCategories.length)];
+      }
+    }
+
+    const categoryQuestions = questionCategories[category]?.questions || questionCategories.icebreakers.questions;
+    const question = categoryQuestions[Math.floor(Math.random() * categoryQuestions.length)];
+    
+    setCurrentCategory(category);
+    return question;
+  };
+
+  // Firebase functions
+  const createFirebaseSession = async (sessionCode, hostPlayer) => {
+    try {
+      await setDoc(doc(db, 'sessions', sessionCode), {
+        hostId: hostPlayer.id,
+        players: [hostPlayer],
+        currentQuestion: '',
+        gameState: 'waiting',
+        selectedCategories: [],
+        createdAt: serverTimestamp()
+      });
+      return true;
+    } catch (error) {
+      console.error('Error creating session:', error);
+      return false;
+    }
+  };
+
+  const joinFirebaseSession = async (sessionCode, player) => {
+    try {
+      const sessionRef = doc(db, 'sessions', sessionCode);
+      const sessionSnap = await getDoc(sessionRef);
+      
+      if (sessionSnap.exists()) {
+        const sessionData = sessionSnap.data();
+        const updatedPlayers = [...sessionData.players, player];
+        
+        await updateDoc(sessionRef, {
+          players: updatedPlayers
+        });
+        
+        return sessionData;
+      } else {
+        throw new Error('Session not found');
+      }
+    } catch (error) {
+      console.error('Error joining session:', error);
+      return null;
+    }
+  };
+
+  const updateGameQuestion = async (sessionCode, question, category) => {
+    try {
+      await updateDoc(doc(db, 'sessions', sessionCode), {
+        currentQuestion: question,
+        currentCategory: category,
+        gameState: 'playing'
+      });
+    } catch (error) {
+      console.error('Error updating question:', error);
+    }
+  };
+
+  const updateSessionCategories = async (sessionCode, categories) => {
+    try {
+      await updateDoc(doc(db, 'sessions', sessionCode), {
+        selectedCategories: categories
+      });
+    } catch (error) {
+      console.error('Error updating categories:', error);
+    }
+  };
+
+  const listenToSession = (sessionCode) => {
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const unsubscribe = onSnapshot(sessionRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        setPlayers(data.players || []);
+        setCurrentQuestion(data.currentQuestion || '');
+        setCurrentCategory(data.currentCategory || '');
+        setSelectedCategories(data.selectedCategories || []);
+        
+        if (data.gameState === 'playing' && gameState !== 'playing') {
+          setGameState('playing');
+        }
+      }
+    });
+    
+    setSessionListener(unsubscribe);
+    return unsubscribe;
+  };
+
+  // Cleanup listener on unmount
+  useEffect(() => {
+    return () => {
+      if (sessionListener) {
+        sessionListener();
+      }
+    };
+  }, [sessionListener]);
+
+  const handleSurveySubmit = () => {
+    if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
+      setGameState('createOrJoin');
+    }
+  };
+
+  const handleCreateSession = async () => {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const hostPlayer = {
+      id: Date.now().toString(),
+      name: playerName,
+      isHost: true,
+      surveyAnswers,
+      joinedAt: new Date().toISOString()
+    };
+    
+    const success = await createFirebaseSession(code, hostPlayer);
+    
+    if (success) {
+      setSessionCode(code);
+      setIsHost(true);
+      setPlayers([hostPlayer]);
+      setGameState('categorySelection');
+      
+      // Start listening to session updates
+      listenToSession(code);
+    } else {
+      alert('Failed to create session. Please try again.');
+    }
+  };
+
+  const handleJoinSession = async () => {
+    if (sessionCode.trim()) {
+      const player = {
+        id: Date.now().toString(),
+        name: playerName,
+        isHost: false,
+        surveyAnswers,
+        joinedAt: new Date().toISOString()
+      };
+      
+      const sessionData = await joinFirebaseSession(sessionCode.trim().toUpperCase(), player);
+      
+      if (sessionData) {
+        setPlayers(sessionData.players);
+        setSelectedCategories(sessionData.selectedCategories || []);
+        setGameState('relationshipSurvey');
+        
+        // Start listening to session updates
+        listenToSession(sessionCode.trim().toUpperCase());
+      } else {
+        alert('Session not found. Please check the code and try again.');
+      }
+    }
+  };
+
+  const handleRelationshipSurveySubmit = async () => {
+    const currentPlayer = {
+      id: Date.now().toString(),
+      name: playerName,
+      isHost: false,
+      surveyAnswers,
+      relationshipAnswers,
+      joinedAt: new Date().toISOString()
+    };
+    
+    try {
+      const sessionRef = doc(db, 'sessions', sessionCode);
+      const sessionSnap = await getDoc(sessionRef);
+      
+      if (sessionSnap.exists()) {
+        const sessionData = sessionSnap.data();
+        const updatedPlayers = sessionData.players.map(p => 
+          p.name === playerName ? currentPlayer : p
+        );
+        
+        await updateDoc(sessionRef, {
+          players: updatedPlayers
+        });
+        
+        // If categories are already selected, go to waiting room, otherwise go to category selection
+        if (sessionData.selectedCategories && sessionData.selectedCategories.length > 0) {
+          setGameState('waitingRoom');
+        } else {
+          setGameState('categorySelection');
+        }
+      }
+    } catch (error) {
+      console.error('Error updating player data:', error);
+    }
+  };
+
+  const handleCategorySelection = async () => {
+    if (isHost) {
+      await updateSessionCategories(sessionCode, selectedCategories);
+    }
+    setGameState('waitingRoom');
+  };
+
+  const handleStartGame = async () => {
+    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers);
+    await updateGameQuestion(sessionCode, question, currentCategory);
+    setCurrentQuestion(question);
+    setGameState('playing');
+  };
+
+  const handleNextQuestion = async () => {
+    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers);
+    await updateGameQuestion(sessionCode, question, currentCategory);
+    setCurrentQuestion(question);
+  };
+
+  // Welcome Screen
+  if (gameState === 'welcome') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
+              <MessageCircle className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">Overshare</h1>
+            <p className="text-gray-600">Personalized conversation games that bring people closer together</p>
           </div>
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Overshare</h1>
-          <p className="text-gray-600">Personalized conversation games that bring people closer together</p>
+          
+          <div className="mb-6">
+            <input
+              type="text"
+              placeholder="Enter your name"
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg"
+            />
+          </div>
+          
+          <button
+            onClick={() => playerName.trim() && setGameState('survey')}
+            disabled={!playerName.trim()}
+            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Let's Get Started
+          </button>
         </div>
-        
-        <div className="mb-6">
-          <input
-            type="text"
-            placeholder="Enter your name"
-            className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg"
-          />
-        </div>
-        
-        <button
-          className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-        >
-          Coming Soon - Fixing Deployment
-        </button>
       </div>
-    </div>
-  );
-}
+    );
+  }
+
+  // Survey Screen
+  if (gameState === 'survey') {
+    const currentQuestionIndex = Object.keys(surveyAnswers).length;
+    const currentSurveyQuestion = initialSurveyQuestions[currentQuestionIndex];
+    
+    if (currentQuestionIndex >= initialSurveyQuestions.length) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+            <div className="mb-6">
+              <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Choose Your Question Style</h2>
+            <p className="text-gray-600">Select the types of questions you want (you can pick multiple)</p>
+          </div>
+          
+          <div className="space-y-3 mb-6">
+            {Object.entries(questionCategories).map(([key, category]) => {
+              const IconComponent = category.icon;
+              const isRecommended = recommended.includes(key);
+              const isSelected = selectedCategories.includes(key);
+              
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedCategories(selectedCategories.filter(c => c !== key));
+                    } else {
+                      setSelectedCategories([...selectedCategories, key]);
+                    }
+                  }}
+                  className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
+                    isSelected 
+                      ? 'border-purple-500 bg-purple-50' 
+                      : 'border-gray-200 hover:border-purple-300'
+                  }`}
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
+                      <IconComponent className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-2">
+                        <h3 className="font-semibold text-gray-800">{category.name}</h3>
+                        {isRecommended && (
+                          <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">
+                            Recommended
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-600 mt-1">{category.description}</p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          
+          <div className="space-y-3">
+            <button
+              onClick={handleCategorySelection}
+              disabled={selectedCategories.length === 0}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Continue with {selectedCategories.length} {selectedCategories.length === 1 ? 'Category' : 'Categories'}
+            </button>
+            
+            <button
+              onClick={() => {
+                setSelectedCategories(recommended);
+                handleCategorySelection();
+              }}
+              className="w-full bg-white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all"
+            >
+              Use Recommended Categories
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Waiting Room Screen
+  if (gameState === 'waitingRoom') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Session {sessionCode}</h2>
+            <p className="text-gray-600">Share this code with others to join</p>
+          </div>
+          
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">Players ({players.length})</h3>
+            <div className="space-y-2">
+              {players.map((player, index) => (
+                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                  <span className="font-medium">{player.name}</span>
+                  {player.isHost && <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded-full">Host</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {selectedCategories.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
+              <div className="flex flex-wrap gap-2">
+                {selectedCategories.map(categoryKey => {
+                  const category = questionCategories[categoryKey];
+                  const IconComponent = category.icon;
+                  return (
+                    <div
+                      key={categoryKey}
+                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category.color} text-white text-sm`}
+                    >
+                      <IconComponent className="w-4 h-4" />
+                      <span>{category.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          
+          {isHost && (
+            <button
+              onClick={handleStartGame}
+              disabled={players.length < 2}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Game
+            </button>
+          )}
+          
+          {!isHost && (
+            <p className="text-gray-500">Waiting for host to start the game...</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Playing Screen
+  if (gameState === 'playing') {
+    const currentCategoryData = questionCategories[currentCategory];
+    const IconComponent = currentCategoryData?.icon || MessageCircle;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4">
+              <IconComponent className="w-6 h-6 text-white" />
+            </div>
+            
+            {currentCategoryData && (
+              <div className="mb-4">
+                <span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}>
+                  <IconComponent className="w-3 h-3" />
+                  <span>{currentCategoryData.name}</span>
+                </span>
+              </div>
+            )}
+            
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">Question for Everyone</h2>
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-2xl border-l-4 border-purple-500">
+              <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            {isHost && (
+              <button
+                onClick={handleNextQuestion}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+              >
+                Next Question
+              </button>
+            )}
+            
+            <button
+              onClick={() => setGameState('waitingRoom')}
+              className="w-full bg-white border-2 border-gray-300 text-gray-600 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 transition-all"
+            >
+              Back to Lobby
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}w-12 h-12 text-purple-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Perfect, {playerName}!</h2>
+              <p className="text-gray-600">We'll use this to create personalized questions for your group.</p>
+            </div>
+            
+            <button
+              onClick={handleSurveySubmit}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-gray-500">Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}</span>
+              <div className="w-16 h-2 bg-gray-200 rounded-full">
+                <div 
+                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                  style={{ width: `${((currentQuestionIndex + 1) / initialSurveyQuestions.length) * 100}%` }}
+                ></div>
+              </div>
+            </div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-6">{currentSurveyQuestion.question}</h2>
+          </div>
+          
+          <div className="space-y-3">
+            {currentSurveyQuestion.options.map((option, index) => (
+              <button
+                key={index}
+                onClick={() => {
+                  setSurveyAnswers({
+                    ...surveyAnswers,
+                    [currentSurveyQuestion.id]: option
+                  });
+                }}
+                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Create or Join Screen
+  if (gameState === 'createOrJoin') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6">Ready to play, {playerName}!</h2>
+          
+          <div className="space-y-4">
+            <button
+              onClick={handleCreateSession}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
+            >
+              <Users className="w-5 h-5 mr-2" />
+              Create New Game
+            </button>
+            
+            <div className="flex items-center my-4">
+              <div className="flex-1 h-px bg-gray-300"></div>
+              <span className="px-4 text-gray-500 text-sm">or</span>
+              <div className="flex-1 h-px bg-gray-300"></div>
+            </div>
+            
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder="Enter session code"
+                value={sessionCode}
+                onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
+                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono"
+              />
+              <button
+                onClick={handleJoinSession}
+                disabled={!sessionCode.trim()}
+                className="w-full bg-white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Join Game
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Relationship Survey Screen
+  if (gameState === 'relationshipSurvey') {
+    const currentPlayerIndex = Object.keys(relationshipAnswers).length;
+    const currentPlayer = players[currentPlayerIndex];
+    
+    if (currentPlayerIndex >= players.length) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+            <div className="mb-6">
+              <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Great!</h2>
+              <p className="text-gray-600">Now let's choose what types of questions you want to explore.</p>
+            </div>
+            
+            <button
+              onClick={handleRelationshipSurveySubmit}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {players.length}</span>
+              <div className="w-16 h-2 bg-gray-200 rounded-full">
+                <div 
+                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                  style={{ width: `${((currentPlayerIndex + 1) / players.length) * 100}%` }}
+                ></div>
+              </div>
+            </div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">How are you connected to {currentPlayer?.name}?</h2>
+            <p className="text-gray-600 text-sm">This helps us create better questions for your group.</p>
+          </div>
+          
+          <div className="space-y-3">
+            {relationshipOptions.map((option, index) => (
+              <button
+                key={index}
+                onClick={() => {
+                  setRelationshipAnswers({
+                    ...relationshipAnswers,
+                    [currentPlayer.name]: option
+                  });
+                }}
+                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Category Selection Screen
+  if (gameState === 'categorySelection') {
+    const recommended = recommendCategories(players, relationshipAnswers);
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <Sparkles className="
