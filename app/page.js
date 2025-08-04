@@ -333,20 +333,32 @@ export default function Overshare() {
   };
 
   const listenToSession = (sessionCode) => {
-    const sessionRef = doc(db, 'sessions', sessionCode);
-    const unsubscribe = onSnapshot(sessionRef, (doc) => {
-      if (doc.exists()) {
-        const data = doc.data();
-        setPlayers(data.players || []);
-        setCurrentQuestion(data.currentQuestion || '');
-        setCurrentCategory(data.currentCategory || '');
-        setSelectedCategories(data.selectedCategories || []);
-        
-        if (data.gameState === 'playing' && gameState !== 'playing') {
-          setGameState('playing');
-        }
+  console.log('Setting up listener for session:', sessionCode); // Debug log
+  
+  const sessionRef = doc(db, 'sessions', sessionCode);
+  const unsubscribe = onSnapshot(sessionRef, (doc) => {
+    console.log('Received session update:', doc.data()); // Debug log
+    
+    if (doc.exists()) {
+      const data = doc.data();
+      console.log('Players in session:', data.players); // Debug log
+      
+      setPlayers(data.players || []);
+      setCurrentQuestion(data.currentQuestion || '');
+      setCurrentCategory(data.currentCategory || '');
+      setSelectedCategories(data.selectedCategories || []);
+      
+      if (data.gameState === 'playing' && gameState !== 'playing') {
+        setGameState('playing');
       }
-    });
+    }
+  }, (error) => {
+    console.error('Listener error:', error); // Error handling
+  });
+  
+  setSessionListener(unsubscribe);
+  return unsubscribe;
+};
     
     setSessionListener(unsubscribe);
     return unsubscribe;
