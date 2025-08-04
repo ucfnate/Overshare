@@ -490,8 +490,9 @@ const handleSurveySubmit = () => {
     await updateGameQuestion(sessionCode, question, currentCategory);
     setCurrentQuestion(question);
   };
-    // Welcome Screen
-    if (gameState === 'welcome') {
+
+  // Welcome Screen
+  if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
