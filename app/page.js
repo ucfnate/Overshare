@@ -493,7 +493,7 @@ const handleSurveySubmit = () => {
 
   // Welcome Screen
   if (gameState === 'welcome') {
-    return (
+     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
@@ -701,7 +701,7 @@ const handleSurveySubmit = () => {
 if (gameState === 'categorySelection') {
     const recommended = recommendCategories(players, relationshipAnswers);
     
-    return (
+     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
