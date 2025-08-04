@@ -491,7 +491,7 @@ const handleSurveySubmit = () => {
     setCurrentQuestion(question);
   };
 
-// Welcome Screen
+  // Welcome Screen
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -698,7 +698,7 @@ const handleSurveySubmit = () => {
   }
 
 // Category Selection Screen
-  if (gameState === 'categorySelection') {
+if (gameState === 'categorySelection') {
     const recommended = recommendCategories(players, relationshipAnswers);
     
     return (
