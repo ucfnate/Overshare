@@ -6,11 +6,12 @@ Overshare creates AI-powered conversation questions tailored to your group's per
 
 ## Features
 
-- 🎨 **Personalized Questions** - AI generates questions based on your group's survey responses
+- 🎨 **Personalized Questions** - Smart questions based on your group's survey responses
 - 👥 **Real-time Multiplayer** - Share session codes and play together on any device
 - 📱 **Mobile-First** - Designed for phones, perfect for restaurants and social settings
 - 🔗 **Relationship-Aware** - Questions adapt based on how players know each other
 - ⚡ **Instant Setup** - No accounts needed, just names and session codes
+- 🎯 **5 Question Categories** - Icebreakers, Deep Dive, Creative, Spicy, Goals & Growth
 
 ## Tech Stack
 
@@ -49,11 +50,29 @@ Then deploy via Vercel CLI or connect your GitHub repo to Vercel.
 
 ## How It Works
 
-1. **Personal Survey** - Players answer 4 quick questions about personality and interests
+1. **Personal Survey** - Players answer 4 quick questions about personality and preferences
 2. **Session Creation** - Host creates a room with a shareable code
 3. **Relationship Mapping** - New players describe how they know existing players
-4. **AI Questions** - Personalized questions generated based on group dynamics
-5. **Real-time Sync** - Everyone sees the same questions simultaneously
+4. **Category Selection** - Choose from 5 types of questions based on group comfort level
+5. **Smart Questions** - Personalized questions generated based on group dynamics
+6. **Real-time Sync** - Everyone sees the same questions simultaneously
+
+## Question Categories
+
+### 🌟 Icebreakers
+Light, fun questions perfect for new groups or warming up.
+
+### ❤️ Deep Dive  
+Meaningful questions for genuine connection and vulnerability.
+
+### 💡 Creative & Imaginative
+Fun hypotheticals and "what if" scenarios that spark creativity.
+
+### 🔥 Spicy
+Bold questions for adventurous groups who want to push boundaries.
+
+### 🎯 Goals & Growth
+Future-focused and aspirational questions about dreams and development.
 
 ## Project Structure
 
@@ -85,6 +104,9 @@ const initialSurveyQuestions = [
 ];
 ```
 
+### Question Categories
+Add new questions to any category in the `questionCategories` object in `app/page.js`.
+
 ### Relationship Types
 Modify `relationshipOptions` in `app/page.js`:
 ```javascript
@@ -93,32 +115,6 @@ const relationshipOptions = [
   'Another type',
   // Add more options...
 ];
-```
-
-### AI Questions
-Replace the `generatePersonalizedQuestion` function with Claude API integration for truly dynamic questions.
-
-## Firebase Security Rules
-
-For production, update Firestore rules:
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /sessions/{sessionId} {
-      allow read, write: if true; // Temporary - implement proper auth
-    }
-  }
-}
-```
-
-## Environment Variables
-
-For production, consider adding:
-```
-NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_domain
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
 ```
 
 ## Contributing
@@ -147,3 +143,5 @@ This project is licensed under the MIT License.
 ---
 
 **Built with ❤️ for bringing people closer together**
+
+Perfect for date nights, friend gatherings, family dinners, and getting to know new people!
