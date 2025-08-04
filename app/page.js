@@ -333,67 +333,50 @@ export default function Overshare() {
   };
 
 const listenToSession = (sessionCode) => {
-  console.log('Setting up listener for session:', sessionCode);
-  
-  // Clean up any existing listener first
-  if (sessionListener) {
-    console.log('Cleaning up old listener');
-    sessionListener();
-  }
+  console.log('🚀 Setting up listener for session:', sessionCode);
   
   const sessionRef = doc(db, 'sessions', sessionCode);
   
-  const unsubscribe = onSnapshot(
-    sessionRef,
-    {
-      includeMetadataChanges: true  // This ensures we get all changes
-    },
-    (doc) => {
-      console.log('🔥 Firebase listener triggered!', {
-        exists: doc.exists(),
-        data: doc.data(),
-        hasPendingWrites: doc.metadata.hasPendingWrites,
-        fromCache: doc.metadata.fromCache
-      });
+  const unsubscribe = onSnapshot(sessionRef, (doc) => {
+    console.log('🔥 Listener triggered! Doc exists:', doc.exists());
+    
+    if (doc.exists()) {
+      const data = doc.data();
+      console.log('📊 Session data:', data);
+      console.log('👥 Players:', data.players);
       
-      if (doc.exists()) {
-        const data = doc.data();
-        console.log('Players in session:', data.players);
-        console.log('Current players state before update:', players);
-        
-        setPlayers(data.players || []);
-        setCurrentQuestion(data.currentQuestion || '');
-        setCurrentCategory(data.currentCategory || '');
-        setSelectedCategories(data.selectedCategories || []);
-        
-        if (data.gameState === 'playing' && gameState !== 'playing') {
-          setGameState('playing');
-        }
+      // Force update the players state
+      setPlayers([...data.players || []]);
+      setCurrentQuestion(data.currentQuestion || '');
+      setCurrentCategory(data.currentCategory || '');
+      setSelectedCategories([...data.selectedCategories || []]);
+      
+      if (data.gameState === 'playing' && gameState !== 'playing') {
+        setGameState('playing');
       }
-    },
-    (error) => {
-      console.error('❌ Listener error:', error);
+    } else {
+      console.log('❌ Session document does not exist');
     }
-  );
+  }, (error) => {
+    console.error('❌ Firebase listener error:', error);
+  });
   
-  setSessionListener(unsubscribe);
+  // Store the unsubscribe function directly (not in state)
+  window.currentSessionListener = unsubscribe;
+  
   return unsubscribe;
 };
 
   // Cleanup listener on unmount
-  useEffect(() => {
-    return () => {
-      if (sessionListener) {
-        sessionListener();
-      }
-    };
-  }, [sessionListener]);
-
-const handleSurveySubmit = () => {
-    if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
-      setGameState('createOrJoin');
+useEffect(() => {
+  return () => {
+    if (window.currentSessionListener) {
+      console.log('🧹 Cleaning up listener');
+      window.currentSessionListener();
+      window.currentSessionListener = null;
     }
   };
+}, []);
 
 const handleCreateSession = async () => {
   const code = Math.random().toString(36).substring(2, 8).toUpperCase();
