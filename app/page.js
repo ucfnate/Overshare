@@ -375,36 +375,33 @@ const handleSurveySubmit = () => {
     }
   };
 
-  const handleCreateSession = async () => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const hostPlayer = {
-      id: Date.now().toString(),
-      name: playerName,
-      isHost: true,
-      surveyAnswers,
-      joinedAt: new Date().toISOString()
-    };
-    
-    const success = await createFirebaseSession(code, hostPlayer);
-    
-   if (success) {
-  setSessionCode(code);
-  setIsHost(true);
-  setPlayers([hostPlayer]);
-  
-  // Start listening BEFORE changing state
-  listenToSession(code);
-  
-  // Small delay to ensure listener is active
-  setTimeout(() => {
-    setGameState('categorySelection');
-  }, 500);
-}
-    
-    else {
-      alert('Failed to create session. Please try again.');
-    }
+const handleCreateSession = async () => {
+  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const hostPlayer = {
+    id: Date.now().toString(),
+    name: playerName,
+    isHost: true,
+    surveyAnswers,
+    joinedAt: new Date().toISOString()
   };
+  
+  const success = await createFirebaseSession(code, hostPlayer);
+  
+  if (success) {
+    setSessionCode(code);
+    setIsHost(true);
+    setPlayers([hostPlayer]);
+    setGameState('categorySelection');
+    
+    // Add delay before listener
+    setTimeout(() => {
+      console.log('Starting listener after delay');
+      listenToSession(code);
+    }, 1000);
+  } else {
+    alert('Failed to create session. Please try again.');
+  }
+};
 
   const handleJoinSession = async () => {
     if (sessionCode.trim()) {
