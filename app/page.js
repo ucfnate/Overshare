@@ -24,6 +24,14 @@ export default function Overshare() {
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [isHost, setIsHost] = useState(false);
   const [sessionListener, setSessionListener] = useState(null);
+  // Add these state variables with your existing ones
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
+  const [availableCategories, setAvailableCategories] = useState([]);
+  const [usedCategories, setUsedCategories] = useState([]);
+  const [turnHistory, setTurnHistory] = useState([]);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [categoryVotes, setCategoryVotes] = useState({});
+  const [myVotedCategories, setMyVotedCategories] = useState([]);
 
   const initialSurveyQuestions = [
     {
@@ -79,7 +87,18 @@ export default function Overshare() {
         "What's the most embarrassing thing you've googled?",
         "If you could swap lives with anyone for a week, who would it be?",
         "What's a skill you wish was taught in school but wasn't?",
-        "If you could make one rule that everyone had to follow, what would it be?"
+        "If you could make one rule that everyone had to follow, what would it be?",
+        // New questions
+        "What's the most ridiculous thing you've convinced someone was true?",
+        "If you could eliminate one minor inconvenience from daily life, what would it be?",
+        "What's your most irrational fear that you're secretly embarrassed about?",
+        "If you had to wear a warning label, what would it say?",
+        "What's the weirdest dream you remember having?",
+        "If you could add a 13th month to the year, what would you name it?",
+        "What's something you do when you're alone that you'd never do in front of others?",
+        "If you could make any activity an Olympic sport, what would you win gold in?",
+        "What's the most unusual thing you find attractive?",
+        "If you had to live in a world made of one food, what food would you choose?"
       ]
     },
     deep_dive: {
@@ -102,7 +121,18 @@ export default function Overshare() {
         "What's something you've forgiven yourself for that was hard to let go?",
         "What would you want to be remembered for?",
         "What's a risk you took that taught you something important about yourself?",
-        "What's the most valuable piece of advice you've received but initially ignored?"
+        "What's the most valuable piece of advice you've received but initially ignored?",
+        // New questions
+        "What's a hard truth about yourself that you've recently accepted?",
+        "What's the biggest sacrifice you've made that no one knows about?",
+        "What childhood wound still affects how you show up in relationships today?",
+        "What's something you need to hear but no one has told you?",
+        "What part of your personality do you think people misunderstand the most?",
+        "What's a dream you've given up on and why?",
+        "What would your life look like if you weren't afraid of judgment?",
+        "What's the most honest thing you've never said to someone you love?",
+        "What do you think you'll regret not doing when you're 80?",
+        "What's a pattern in your life that you're finally ready to break?"
       ]
     },
     creative: {
@@ -125,7 +155,18 @@ export default function Overshare() {
         "You're founding a new country. What's your national motto and why?",
         "If you could give everyone a new sense (beyond the five we have), what would it be?",
         "You can make one extinct animal come back to life. What's your choice and why?",
-        "If you could redesign the concept of money, what would the new system look like?"
+        "If you could redesign the concept of money, what would the new system look like?",
+        // New questions
+        "If you could create a new emotion that doesn't exist, what would it feel like?",
+        "You can merge any two companies. Which merger would create the most chaos?",
+        "If you had to design hell for someone you dislike, what would their personal hell be?",
+        "You can make one conspiracy theory actually true. Which one do you choose?",
+        "If you could add a new mandatory subject to all schools, what would teach kids?",
+        "You can make one body part detachable. Which would be most convenient?",
+        "If you could create a new sport using items from your kitchen, what would it be?",
+        "You can make one animal as intelligent as humans. Which causes the most drama?",
+        "If you could add a new day between Saturday and Sunday, how would people spend it?",
+        "You can make one fictional technology real. What do you choose and why?"
       ]
     },
     spicy: {
@@ -148,7 +189,18 @@ export default function Overshare() {
         "If you could know the honest answer to any question about yourself, what would you ask?",
         "What's something you've done that you'd never want your parents to find out about?",
         "What's your most unpopular opinion that you'd defend?",
-        "If you could switch lives with someone you know for 24 hours, who would you choose?"
+        "If you could switch lives with someone you know for 24 hours, who would you choose?",
+        // New questions
+        "What's the most inappropriate thing you've laughed at?",
+        "What's your most toxic trait that you're lowkey proud of?",
+        "If you could see one statistic about everyone you meet, what would you choose?",
+        "What's the pettiest thing you've done that you don't regret?",
+        "What's a compliment you've received that felt more like an insult?",
+        "If you had to expose one person's search history, whose would be most interesting?",
+        "What's something you do that you think everyone does, but you're afraid to ask?",
+        "What's the most unhinged intrusive thought you've had this week?",
+        "If karma is real, what's coming for you?",
+        "What's the worst advice you've ever given that someone actually followed?"
       ]
     },
     growth: {
@@ -171,12 +223,56 @@ export default function Overshare() {
         "What's a relationship in your life you want to invest more energy in?",
         "What's something you want to experience before you turn [next milestone age]?",
         "What's a way you want to challenge yourself that excites and scares you?",
-        "If you could design your ideal typical day five years from now, what would it look like?"
+        "If you could design your ideal typical day five years from now, what would it look like?",
+        // New questions
+        "What's the biggest change you need to make but keep postponing?",
+        "What would you do differently if you truly believed you were enough?",
+        "What's a boundary you need to set that you've been avoiding?",
+        "If you had unlimited resources, what problem would you solve?",
+        "What's one thing you could do tomorrow that your future self would thank you for?",
+        "What part of your life needs a complete reimagining?",
+        "What would you pursue if you knew your family would support you no matter what?",
+        "What's the gap between who you are and who you want to be?",
+        "What legacy do you want to leave for the next generation?",
+        "If you could guarantee one thing for your future, what would it be?"
+      ]
+    },
+    uncomfortable_truths: {
+      name: 'Uncomfortable Truths',
+      icon: MessageCircle,
+      description: 'Questions that challenge your self-perception',
+      color: 'from-gray-600 to-purple-600',
+      questions: [
+        "What's a harsh reality about yourself that others see but you tend to ignore?",
+        "When was the last time you were the villain in someone else's story?",
+        "What's something you criticize in others that you're guilty of yourself?",
+        "What privilege do you have that you take for granted?",
+        "What's a time you were completely wrong but too proud to admit it?",
+        "What's the most selfish decision you've made that you still stand by?",
+        "What truth about a relationship are you refusing to accept?",
+        "What's something you do for others that's actually more about you?",
+        "What excuse do you use most often to avoid growth?",
+        "What's a way you manipulate situations to get what you want?",
+        "What double standard do you hold that benefits you?",
+        "What's something you're mediocre at but think you're good at?",
+        "What uncomfortable feedback have multiple people given you that's probably true?",
+        "What's a time your ego got in the way of doing the right thing?",
+        "What pattern do you see in others' lives but are blind to in your own?",
+        "What's the gap between how you see yourself and how others see you?",
+        "What do you pretend to want but actually fear getting?",
+        "What's a truth about your parents that changed how you see yourself?",
+        "What part of your identity are you most attached to losing?",
+        "What's the story you tell yourself to avoid taking responsibility?",
+        "What would change if you stopped needing to be right?",
+        "What's something you judge in your past self that you still do?",
+        "What uncomfortable truth would set you free if you accepted it?",
+        "What do you need to grieve that you've been avoiding?",
+        "What's the cost of maintaining the image you project to the world?"
       ]
     }
   };
 
-// Smart category recommendation based on group composition and survey answers
+  // Smart category recommendation based on group composition and survey answers
   const recommendCategories = (players, relationships) => {
     const intimacyScore = calculateGroupIntimacy(relationships);
     const comfortLevel = getGroupComfortLevel(players);
@@ -270,6 +366,7 @@ export default function Overshare() {
   };
 
   // Firebase functions
+  // Update your createFirebaseSession function to include turn data
   const createFirebaseSession = async (sessionCode, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', sessionCode), {
@@ -278,6 +375,12 @@ export default function Overshare() {
         currentQuestion: '',
         gameState: 'waiting',
         selectedCategories: [],
+        // NEW: Turn system data
+        currentTurnIndex: 0,
+        availableCategories: [],
+        usedCategories: [],
+        turnHistory: [], // Track who picked what
+        categoryVotes: {}, // Track category votes from all players
         createdAt: serverTimestamp()
       });
       return true;
@@ -332,105 +435,118 @@ export default function Overshare() {
     }
   };
 
-const listenToSession = (sessionCode) => {
-  console.log('🚀 Setting up listener for session:', sessionCode);
-  
-  const sessionRef = doc(db, 'sessions', sessionCode);
-  
-  const unsubscribe = onSnapshot(sessionRef, (doc) => {
-    console.log('🔥 Listener triggered! Doc exists:', doc.exists());
+  const listenToSession = (sessionCode) => {
+    console.log('🚀 Setting up listener for session:', sessionCode);
     
-    if (doc.exists()) {
-      const data = doc.data();
-      console.log('📊 Session data:', data);
-      console.log('👥 Players:', data.players);
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    
+    const unsubscribe = onSnapshot(sessionRef, (doc) => {
+      console.log('🔥 Listener triggered! Doc exists:', doc.exists());
       
-      // Force update the players state
-      setPlayers([...data.players || []]);
-      setCurrentQuestion(data.currentQuestion || '');
-      setCurrentCategory(data.currentCategory || '');
-      setSelectedCategories([...data.selectedCategories || []]);
-      
-      if (data.gameState === 'playing' && gameState !== 'playing') {
-        setGameState('playing');
+      if (doc.exists()) {
+        const data = doc.data();
+        console.log('📊 Session data:', data);
+        
+        // Update existing state
+        setPlayers([...data.players || []]);
+        setCurrentQuestion(data.currentQuestion || '');
+        setCurrentCategory(data.currentCategory || '');
+        setSelectedCategories([...data.selectedCategories || []]);
+        
+        // Update new turn-related state
+        setCurrentTurnIndex(data.currentTurnIndex || 0);
+        setAvailableCategories([...data.availableCategories || []]);
+        setUsedCategories([...data.usedCategories || []]);
+        setTurnHistory([...data.turnHistory || []]);
+        setCategoryVotes(data.categoryVotes || {});
+        
+        // Handle game state transitions
+        if (data.gameState === 'playing' && gameState !== 'playing') {
+          setGameState('playing');
+        } else if (data.gameState === 'categoryPicking' && gameState !== 'categoryPicking') {
+          setGameState('categoryPicking');
+        } else if (data.gameState === 'categoryVoting' && gameState !== 'categoryVoting') {
+          setGameState('categoryVoting');
+        } else if (data.gameState === 'relationshipSurvey' && gameState !== 'relationshipSurvey') {
+          setGameState('relationshipSurvey');
+        } else if (data.gameState === 'waitingForHost' && gameState !== 'waitingForHost') {
+          setGameState('waitingForHost');
+        }
+      } else {
+        console.log('❌ Session document does not exist');
       }
-    } else {
-      console.log('❌ Session document does not exist');
-    }
-  }, (error) => {
-    console.error('❌ Firebase listener error:', error);
-  });
-  
-  // Store the unsubscribe function directly (not in state)
-  window.currentSessionListener = unsubscribe;
-  
-  return unsubscribe;
-};
+    }, (error) => {
+      console.error('❌ Firebase listener error:', error);
+    });
+    
+    // Store the unsubscribe function directly (not in state)
+    window.currentSessionListener = unsubscribe;
+    
+    return unsubscribe;
+  };
 
   // Cleanup listener on unmount
-useEffect(() => {
-  return () => {
-    if (window.currentSessionListener) {
-      console.log('🧹 Cleaning up listener');
-      window.currentSessionListener();
-      window.currentSessionListener = null;
+  useEffect(() => {
+    return () => {
+      if (window.currentSessionListener) {
+        console.log('🧹 Cleaning up listener');
+        window.currentSessionListener();
+        window.currentSessionListener = null;
+      }
+    };
+  }, []);
+
+  const handleSurveySubmit = () => {
+    if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
+      setGameState('createOrJoin');
     }
   };
-}, []);
 
-const handleSurveySubmit = () => {
-  if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
-    setGameState('createOrJoin');
-  }
-};
-
-const handleCreateSession = async () => {
-  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const hostPlayer = {
-    id: Date.now().toString(),
-    name: playerName,
-    isHost: true,
-    surveyAnswers,
-    joinedAt: new Date().toISOString()
-  };
-  
-  const success = await createFirebaseSession(code, hostPlayer);
-  
-  if (success) {
-    setSessionCode(code);
-    setIsHost(true);
-    setPlayers([hostPlayer]);
-    setGameState('categorySelection');
+  const handleCreateSession = async () => {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const hostPlayer = {
+      id: Date.now().toString(),
+      name: playerName,
+      isHost: true,
+      surveyAnswers,
+      joinedAt: new Date().toISOString()
+    };
     
-    // Add delay before listener
-    setTimeout(() => {
-      console.log('Starting listener after delay');
-      listenToSession(code);
-    }, 1000);
-  } else {
-    alert('Failed to create session. Please try again.');
-  }
-};
+    const success = await createFirebaseSession(code, hostPlayer);
+    
+    if (success) {
+      setSessionCode(code);
+      setIsHost(true);
+      setPlayers([hostPlayer]);
+      setGameState('waitingRoom');
+      
+      // Add delay before listener
+      setTimeout(() => {
+        console.log('Starting listener after delay');
+        listenToSession(code);
+      }, 1000);
+    } else {
+      alert('Failed to create session. Please try again.');
+    }
+  };
 
   const handleJoinSession = async () => {
     if (sessionCode.trim()) {
-      const player = {
-        id: Date.now().toString(),
-        name: playerName,
-        isHost: false,
-        surveyAnswers,
-        joinedAt: new Date().toISOString()
-      };
+      // Don't add player yet - just check if session exists
+      const sessionRef = doc(db, 'sessions', sessionCode.trim().toUpperCase());
+      const sessionSnap = await getDoc(sessionRef);
       
-      const sessionData = await joinFirebaseSession(sessionCode.trim().toUpperCase(), player);
-      
-      if (sessionData) {
+      if (sessionSnap.exists()) {
+        const sessionData = sessionSnap.data();
         setPlayers(sessionData.players);
         setSelectedCategories(sessionData.selectedCategories || []);
-        setGameState('relationshipSurvey');
+        setSessionCode(sessionCode.trim().toUpperCase());
         
         // Start listening to session updates
         listenToSession(sessionCode.trim().toUpperCase());
+        
+        // Go to waiting room first, not relationship survey
+        setGameState('waitingRoom');
       } else {
         alert('Session not found. Please check the code and try again.');
       }
@@ -438,15 +554,8 @@ const handleCreateSession = async () => {
   };
 
   const handleRelationshipSurveySubmit = async () => {
-    const currentPlayer = {
-      id: Date.now().toString(),
-      name: playerName,
-      isHost: false,
-      surveyAnswers,
-      relationshipAnswers,
-      joinedAt: new Date().toISOString()
-    };
-    
+    // Don't create a new player - they already exist
+    // Just update with relationship data
     try {
       const sessionRef = doc(db, 'sessions', sessionCode);
       const sessionSnap = await getDoc(sessionRef);
@@ -454,18 +563,35 @@ const handleCreateSession = async () => {
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
         const updatedPlayers = sessionData.players.map(p => 
-          p.name === playerName ? currentPlayer : p
+          p.name === playerName 
+            ? { ...p, relationshipAnswers } 
+            : p
         );
         
         await updateDoc(sessionRef, {
           players: updatedPlayers
         });
         
-        // If categories are already selected, go to waiting room, otherwise go to category selection
-        if (sessionData.selectedCategories && sessionData.selectedCategories.length > 0) {
-          setGameState('waitingRoom');
+        // Check if all players have completed relationship survey
+        const allCompleted = updatedPlayers.every(p => p.relationshipAnswers);
+        
+        if (allCompleted) {
+          // Get the selected categories and start the game
+          const sessionData = sessionSnap.data();
+          const topCategories = sessionData.selectedCategories || [];
+          
+          // Move to category picking for first player
+          await updateDoc(sessionRef, {
+            gameState: 'categoryPicking',
+            currentTurnIndex: 0,
+            availableCategories: topCategories,
+            usedCategories: [],
+            turnHistory: []
+          });
+          setGameState('categoryPicking');
         } else {
-          setGameState('categorySelection');
+          // Wait for others
+          setGameState('waitingForOthers');
         }
       }
     } catch (error) {
@@ -473,27 +599,144 @@ const handleCreateSession = async () => {
     }
   };
 
-  const handleCategorySelection = async () => {
-    if (isHost) {
-      await updateSessionCategories(sessionCode, selectedCategories);
+  const handleCategoryVote = async (selectedCats) => {
+    try {
+      const sessionRef = doc(db, 'sessions', sessionCode);
+      const sessionSnap = await getDoc(sessionRef);
+      
+      if (sessionSnap.exists()) {
+        const sessionData = sessionSnap.data();
+        const currentVotes = sessionData.categoryVotes || {};
+        
+        // Update votes for this player
+        currentVotes[playerName] = selectedCats;
+        
+        await updateDoc(sessionRef, {
+          categoryVotes: currentVotes
+        });
+        
+        setMyVotedCategories(selectedCats);
+        
+        // Only check if all players have voted when there are multiple players
+        if (sessionData.players.length > 1) {
+          const allPlayersVoted = sessionData.players.every(player => 
+            currentVotes[player.name] && currentVotes[player.name].length > 0
+          );
+          
+          if (allPlayersVoted) {
+            // Move to waiting room automatically
+            await updateDoc(sessionRef, {
+              gameState: 'waitingForHost'
+            });
+            setGameState('waitingForHost');
+          }
+        }
+        // If only one player (host), just stay in voting screen to show their votes
+      }
+    } catch (error) {
+      console.error('Error submitting category votes:', error);
     }
-    setGameState('waitingRoom');
+  };
+
+  const calculateTopCategories = (votes) => {
+    const voteCount = {};
+    
+    // Count votes for each category
+    Object.values(votes).forEach(playerVotes => {
+      playerVotes.forEach(category => {
+        voteCount[category] = (voteCount[category] || 0) + 1;
+      });
+    });
+    
+    // Sort categories by vote count
+    const sortedCategories = Object.entries(voteCount)
+      .sort((a, b) => b[1] - a[1])
+      .map(([category]) => category);
+    
+    // Return top 3-4 categories, or all if less than 3
+    return sortedCategories.slice(0, Math.min(4, Math.max(3, sortedCategories.length)));
   };
 
   const handleStartGame = async () => {
-    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers);
-    await updateGameQuestion(sessionCode, question, currentCategory);
+    // Get the selected categories from Firebase (they were already calculated during voting)
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const sessionSnap = await getDoc(sessionRef);
+    
+    if (sessionSnap.exists()) {
+      const sessionData = sessionSnap.data();
+      const topCategories = sessionData.selectedCategories || calculateTopCategories(categoryVotes);
+      
+      // Initialize turn-based system with voted categories
+      await updateDoc(sessionRef, {
+        gameState: 'categoryPicking',
+        currentTurnIndex: 0,
+        selectedCategories: topCategories,
+        availableCategories: topCategories,
+        usedCategories: [],
+        turnHistory: []
+      });
+      
+      setSelectedCategories(topCategories);
+      setAvailableCategories(topCategories);
+      setGameState('categoryPicking');
+    }
+  };
+
+  const handleCategoryPicked = async (category) => {
+    const currentPlayer = players[currentTurnIndex];
+    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, category);
+    
+    // Update Firebase with the selected category and question
+    const newUsedCategories = [...usedCategories, category];
+    const newAvailableCategories = availableCategories.filter(c => c !== category);
+    const newTurnHistory = [...turnHistory, {
+      player: currentPlayer.name,
+      category: category,
+      question: question
+    }];
+    
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      currentQuestion: question,
+      currentCategory: category,
+      gameState: 'playing',
+      usedCategories: newUsedCategories,
+      availableCategories: newAvailableCategories,
+      turnHistory: newTurnHistory,
+      currentQuestionAsker: currentPlayer.name
+    });
+    
     setCurrentQuestion(question);
     setGameState('playing');
   };
 
   const handleNextQuestion = async () => {
-    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers);
-    await updateGameQuestion(sessionCode, question, currentCategory);
-    setCurrentQuestion(question);
+    // Move to next player's turn
+    const nextTurnIndex = (currentTurnIndex + 1) % players.length;
+    
+    // Check if we need to reset categories (when all have been used)
+    let newAvailableCategories = availableCategories;
+    let newUsedCategories = usedCategories;
+    
+    // If no categories are available, reset them
+    if (availableCategories.length === 0) {
+      newAvailableCategories = selectedCategories;
+      newUsedCategories = [];
+    }
+    
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      gameState: 'categoryPicking',
+      currentTurnIndex: nextTurnIndex,
+      availableCategories: newAvailableCategories,
+      usedCategories: newUsedCategories
+    });
+    
+    setCurrentTurnIndex(nextTurnIndex);
+    setAvailableCategories(newAvailableCategories);
+    setUsedCategories(newUsedCategories);
+    setGameState('categoryPicking');
   };
 
-// Welcome Screen
+  // Welcome Screen
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -512,7 +755,7 @@ const handleCreateSession = async () => {
               placeholder="Enter your name"
               value={playerName}
               onChange={(e) => setPlayerName(e.target.value)}
-              className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg"
+              className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white text-gray-900"
             />
           </div>
           
@@ -619,7 +862,7 @@ const handleCreateSession = async () => {
                 placeholder="Enter session code"
                 value={sessionCode}
                 onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono"
+                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white text-gray-900"
               />
               <button
                 onClick={handleJoinSession}
@@ -638,9 +881,11 @@ const handleCreateSession = async () => {
   // Relationship Survey Screen
   if (gameState === 'relationshipSurvey') {
     const currentPlayerIndex = Object.keys(relationshipAnswers).length;
-    const currentPlayer = players[currentPlayerIndex];
+    // Filter out yourself from the players list
+    const otherPlayers = players.filter(p => p.name !== playerName);
+    const currentPlayer = otherPlayers[currentPlayerIndex];
     
-    if (currentPlayerIndex >= players.length) {
+    if (currentPlayerIndex >= otherPlayers.length) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
@@ -666,11 +911,11 @@ const handleCreateSession = async () => {
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {players.length}</span>
+              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {otherPlayers.length}</span>
               <div className="w-16 h-2 bg-gray-200 rounded-full">
                 <div 
                   className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
-                  style={{ width: `${((currentPlayerIndex + 1) / players.length) * 100}%` }}
+                  style={{ width: `${((currentPlayerIndex + 1) / otherPlayers.length) * 100}%` }}
                 ></div>
               </div>
             </div>
@@ -699,81 +944,227 @@ const handleCreateSession = async () => {
     );
   }
 
-// Category Selection Screen
-  if (gameState === 'categorySelection') {
+  // Category Voting Screen (All players vote)
+  if (gameState === 'categoryVoting') {
     const recommended = recommendCategories(players, relationshipAnswers);
+    const hasVoted = myVotedCategories.length > 0;
+    const allVotes = Object.values(categoryVotes);
+    const totalVotes = allVotes.length;
+    const waitingFor = players.filter(p => !categoryVotes[p.name]).map(p => p.name);
+    const allPlayersVoted = players.every(p => categoryVotes[p.name] && categoryVotes[p.name].length > 0);
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
             <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Choose Your Question Style</h2>
-            <p className="text-gray-600">Select the types of questions you want (you can pick multiple)</p>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              {hasVoted ? 'Waiting for Others' : 'Vote for Categories'}
+            </h2>
+            <p className="text-gray-600">
+              {hasVoted 
+                ? `${totalVotes} of ${players.length} players have voted`
+                : 'Select 2-3 categories you\'d like to play with'
+              }
+            </p>
+            {hasVoted && (
+              <p className="text-sm text-gray-500 mt-2">Session Code: {sessionCode}</p>
+            )}
           </div>
           
-          <div className="space-y-3 mb-6">
-            {Object.entries(questionCategories).map(([key, category]) => {
-              const IconComponent = category.icon;
-              const isRecommended = recommended.includes(key);
-              const isSelected = selectedCategories.includes(key);
-              
-              return (
-                <button
-                  key={key}
-                  onClick={() => {
-                    if (isSelected) {
-                      setSelectedCategories(selectedCategories.filter(c => c !== key));
-                    } else {
-                      setSelectedCategories([...selectedCategories, key]);
-                    }
-                  }}
-                  className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
-                    isSelected 
-                      ? 'border-purple-500 bg-purple-50' 
-                      : 'border-gray-200 hover:border-purple-300'
-                  }`}
-                >
-                  <div className="flex items-start space-x-3">
-                    <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
-                      <IconComponent className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2">
-                        <h3 className="font-semibold text-gray-800">{category.name}</h3>
-                        {isRecommended && (
-                          <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">
-                            Recommended
-                          </span>
-                        )}
+          {!hasVoted ? (
+            <>
+              <div className="space-y-3 mb-6">
+                {Object.entries(questionCategories).map(([key, category]) => {
+                  const IconComponent = category.icon;
+                  const isRecommended = recommended.includes(key);
+                  const isSelected = selectedCategories.includes(key);
+                  
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedCategories(selectedCategories.filter(c => c !== key));
+                        } else if (selectedCategories.length < 3) {
+                          setSelectedCategories([...selectedCategories, key]);
+                        }
+                      }}
+                      disabled={!isSelected && selectedCategories.length >= 3}
+                      className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
+                        isSelected 
+                          ? 'border-purple-500 bg-purple-50' 
+                          : 'border-gray-200 hover:border-purple-300'
+                      } ${!isSelected && selectedCategories.length >= 3 ? 'opacity-50' : ''}`}
+                    >
+                      <div className="flex items-start space-x-3">
+                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
+                          <IconComponent className="w-4 h-4 text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2">
+                            <h3 className="font-semibold text-gray-800">{category.name}</h3>
+                            {isRecommended && (
+                              <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">
+                                Recommended
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600 mt-1">{category.description}</p>
+                        </div>
                       </div>
-                      <p className="text-sm text-gray-600 mt-1">{category.description}</p>
-                    </div>
+                    </button>
+                  );
+                })}
+              </div>
+              
+              <button
+                onClick={() => handleCategoryVote(selectedCategories)}
+                disabled={selectedCategories.length === 0}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit My Votes ({selectedCategories.length}/3)
+              </button>
+            </>
+          ) : (
+            <div>
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-3">Your Votes:</h3>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {myVotedCategories.map(categoryKey => {
+                    const category = questionCategories[categoryKey];
+                    const IconComponent = category.icon;
+                    return (
+                      <div
+                        key={categoryKey}
+                        className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category.color} text-white text-sm`}
+                      >
+                        <IconComponent className="w-4 h-4" />
+                        <span>{category.name}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              
+              {allPlayersVoted && isHost ? (
+                <div className="space-y-3">
+                  <p className="text-center text-gray-600 mb-4">All players have voted!</p>
+                  <button
+                    onClick={() => {
+                      updateDoc(doc(db, 'sessions', sessionCode), {
+                        gameState: 'waitingForHost'
+                      });
+                      setGameState('waitingForHost');
+                    }}
+                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+                  >
+                    View Results & Start Game
+                  </button>
+                </div>
+              ) : waitingFor.length > 0 ? (
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                    <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
                   </div>
-                </button>
-              );
-            })}
+                  <p className="text-gray-600 mb-2">Waiting for:</p>
+                  <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
+                  
+                  {isHost && (
+                    <button
+                      onClick={() => {
+                        updateDoc(doc(db, 'sessions', sessionCode), {
+                          gameState: 'waitingForHost'
+                        });
+                        setGameState('waitingForHost');
+                      }}
+                      className="mt-4 text-sm text-purple-600 hover:text-purple-700 underline"
+                    >
+                      Continue without waiting
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center">
+                  <p className="text-gray-600">All players have voted!</p>
+                  {!isHost && <p className="text-sm text-gray-500 mt-2">Waiting for host to start the game...</p>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Waiting for Host Screen (After Category Voting)
+  if (gameState === 'waitingForHost') {
+    const voteResults = {};
+    Object.values(categoryVotes).forEach(votes => {
+      votes.forEach(cat => {
+        voteResults[cat] = (voteResults[cat] || 0) + 1;
+      });
+    });
+    
+    const topCategories = calculateTopCategories(categoryVotes);
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">All Votes Are In!</h2>
+            <p className="text-gray-600">Top categories based on everyone's votes:</p>
           </div>
           
-          <div className="space-y-3">
-            <button
-              onClick={handleCategorySelection}
-              disabled={selectedCategories.length === 0}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Continue with {selectedCategories.length} {selectedCategories.length === 1 ? 'Category' : 'Categories'}
-            </button>
-            
-            <button
-              onClick={() => {
-                setSelectedCategories(recommended);
-                handleCategorySelection();
-              }}
-              className="w-full bg-white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all"
-            >
-              Use Recommended Categories
-            </button>
+          <div className="mb-6">
+            <div className="space-y-2">
+              {Object.entries(voteResults)
+                .sort((a, b) => b[1] - a[1])
+                .map(([categoryKey, voteCount]) => {
+                  const category = questionCategories[categoryKey];
+                  const IconComponent = category.icon;
+                  const isSelected = topCategories.includes(categoryKey);
+                  
+                  return (
+                    <div
+                      key={categoryKey}
+                      className={`flex items-center justify-between p-3 rounded-xl ${
+                        isSelected ? 'bg-purple-50 border-2 border-purple-300' : 'bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
+                          <IconComponent className="w-4 h-4 text-white" />
+                        </div>
+                        <span className="font-medium">{category.name}</span>
+                      </div>
+                      <span className="text-sm text-gray-600">{voteCount} votes</span>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
+          
+          {isHost ? (
+            <button
+              onClick={async () => {
+                // Calculate and save the top categories before moving to relationship survey
+                const topCategories = calculateTopCategories(categoryVotes);
+                
+                await updateDoc(doc(db, 'sessions', sessionCode), {
+                  gameState: 'relationshipSurvey',
+                  selectedCategories: topCategories,
+                  availableCategories: topCategories
+                });
+                setGameState('relationshipSurvey');
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Let's See How You Know Each Other
+            </button>
+          ) : (
+            <p className="text-gray-500">Waiting for {players.find(p => p.isHost)?.name} to continue...</p>
+          )}
         </div>
       </div>
     );
@@ -781,6 +1172,8 @@ const handleCreateSession = async () => {
 
   // Waiting Room Screen
   if (gameState === 'waitingRoom') {
+    const isNewPlayer = !players.find(p => p.name === playerName);
+    
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
@@ -822,9 +1215,47 @@ const handleCreateSession = async () => {
             </div>
           )}
           
-          {isHost && (
+          {isNewPlayer && (
             <button
-              onClick={handleStartGame}
+              onClick={async () => {
+                // Add player to session
+                const newPlayer = {
+                  id: Date.now().toString(),
+                  name: playerName,
+                  isHost: false,
+                  surveyAnswers,
+                  joinedAt: new Date().toISOString()
+                };
+                
+                const sessionRef = doc(db, 'sessions', sessionCode);
+                const sessionSnap = await getDoc(sessionRef);
+                
+                if (sessionSnap.exists()) {
+                  const sessionData = sessionSnap.data();
+                  const updatedPlayers = [...sessionData.players, newPlayer];
+                  
+                  await updateDoc(sessionRef, {
+                    players: updatedPlayers
+                  });
+                  
+                  setPlayers(updatedPlayers);
+                }
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
+            >
+              Join Game
+            </button>
+          )}
+          
+    {isHost && !isNewPlayer && (
+            <button
+              onClick={async () => {
+                // Move everyone to category voting after all players joined
+                await updateDoc(doc(db, 'sessions', sessionCode), {
+                  gameState: 'categoryVoting'
+                });
+                setGameState('categoryVoting');
+              }}
               disabled={players.length < 2}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -832,8 +1263,95 @@ const handleCreateSession = async () => {
             </button>
           )}
           
-          {!isHost && (
-            <p className="text-gray-500">Waiting for host to start the game...</p>
+          {!isHost && !isNewPlayer && (
+            <p className="text-gray-500">Waiting for host to continue...</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Category Picking Screen (Turn-based)
+  if (gameState === 'categoryPicking') {
+    const currentPlayer = players[currentTurnIndex] || players[0];
+    const isMyTurn = currentPlayer?.name === playerName;
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            {isMyTurn ? (
+              <>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">Your Turn!</h2>
+                <p className="text-gray-600">Choose a category for the next question</p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">{currentPlayer?.name}'s Turn</h2>
+                <p className="text-gray-600">{currentPlayer?.name} is choosing a category...</p>
+              </>
+            )}
+            <p className="text-sm text-gray-500 mt-2">Round {Math.floor(turnHistory.length / players.length) + 1}</p>
+          </div>
+          
+          {isMyTurn ? (
+            <div className="space-y-3">
+              {availableCategories.length > 0 ? (
+                availableCategories.map((categoryKey) => {
+                  const category = questionCategories[categoryKey];
+                  const IconComponent = category.icon;
+                  
+                  return (
+                    <button
+                      key={categoryKey}
+                      onClick={() => handleCategoryPicked(categoryKey)}
+                      className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-purple-500 hover:bg-purple-50 transition-all text-left"
+                    >
+                      <div className="flex items-start space-x-3">
+                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
+                          <IconComponent className="w-4 h-4 text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-800">{category.name}</h3>
+                          <p className="text-sm text-gray-600 mt-1">{category.description}</p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="text-center p-4 bg-gray-50 rounded-xl">
+                  <p className="text-gray-600">All categories have been used! Categories will reset for the next round.</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+              <p className="text-gray-500">Waiting for {currentPlayer?.name} to choose...</p>
+            </div>
+          )}
+          
+          {usedCategories.length > 0 && (
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
+              <div className="flex flex-wrap gap-2">
+                {usedCategories.map(categoryKey => {
+                  const category = questionCategories[categoryKey];
+                  return (
+                    <span
+                      key={categoryKey}
+                      className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full"
+                    >
+                      {category.name}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -844,6 +1362,8 @@ const handleCreateSession = async () => {
   if (gameState === 'playing') {
     const currentCategoryData = questionCategories[currentCategory];
     const IconComponent = currentCategoryData?.icon || MessageCircle;
+    const currentPlayer = players[currentTurnIndex] || players[0];
+    const isMyTurn = currentPlayer?.name === playerName;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -862,20 +1382,25 @@ const handleCreateSession = async () => {
               </div>
             )}
             
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Question for Everyone</h2>
+            <h2 className="text-lg font-semibold text-gray-800 mb-2">{currentPlayer?.name}'s Question</h2>
+            <p className="text-sm text-gray-500 mb-4">Round {Math.floor(turnHistory.length / players.length) + 1} • Turn {(turnHistory.length % players.length) + 1} of {players.length}</p>
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-2xl border-l-4 border-purple-500">
               <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
             </div>
           </div>
           
           <div className="space-y-4">
-            {isHost && (
+            {isMyTurn ? (
               <button
                 onClick={handleNextQuestion}
                 className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
               >
-                Next Question
+                Pass to {players[(currentTurnIndex + 1) % players.length]?.name}
               </button>
+            ) : (
+              <div className="text-center">
+                <p className="text-gray-600">Waiting for {currentPlayer?.name} to finish their turn...</p>
+              </div>
             )}
             
             <button
@@ -885,6 +1410,38 @@ const handleCreateSession = async () => {
               Back to Lobby
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Waiting for Others Screen (After Relationship Survey)
+  if (gameState === 'waitingForOthers') {
+    const playersWithRelationships = players.filter(p => p.relationshipAnswers);
+    const waitingFor = players.filter(p => !p.relationshipAnswers).map(p => p.name);
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Thanks!</h2>
+            <p className="text-gray-600">Waiting for others to complete their surveys...</p>
+          </div>
+          
+          <div className="mb-4">
+            <p className="text-lg text-gray-700">{playersWithRelationships.length} of {players.length} completed</p>
+          </div>
+          
+          {waitingFor.length > 0 && (
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+              <p className="text-gray-600 mb-2">Still waiting for:</p>
+              <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
+            </div>
+          )}
         </div>
       </div>
     );
