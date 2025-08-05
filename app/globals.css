@@ -2,28 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
-  }
-}
-
+/* Remove the problematic CSS custom properties approach */
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  @apply bg-gradient-to-b from-gray-50 to-white text-gray-900;
+  @apply dark:from-gray-900 dark:to-black dark:text-white;
+  min-height: 100vh;
+}
+
+/* Ensure the html and root elements also get proper dark mode styling */
+html {
+  @apply dark:bg-gray-900;
+}
+
+/* Override any default white backgrounds in dark mode */
+* {
+  @apply dark:border-gray-700;
 }
 
 /* Custom scrollbar for better mobile experience */
@@ -32,14 +25,13 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  @apply bg-gray-100 dark:bg-gray-800;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 2px;
+  @apply bg-gray-300 dark:bg-gray-600 rounded-sm;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  @apply bg-gray-400 dark:bg-gray-500;
 }
