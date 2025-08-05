@@ -539,9 +539,15 @@ export default function Overshare() {
     // Move to next player's turn
     const nextTurnIndex = (currentTurnIndex + 1) % players.length;
     
-    // If we've used all categories, reset the available categories
-    const newAvailableCategories = availableCategories.length === 0 ? selectedCategories : availableCategories;
-    const newUsedCategories = availableCategories.length === 0 ? [] : usedCategories;
+    // Check if we need to reset categories (when all have been used)
+    let newAvailableCategories = availableCategories;
+    let newUsedCategories = usedCategories;
+    
+    // If no categories are available, reset them
+    if (availableCategories.length === 0) {
+      newAvailableCategories = selectedCategories;
+      newUsedCategories = [];
+    }
     
     await updateDoc(doc(db, 'sessions', sessionCode), {
       gameState: 'categoryPicking',
@@ -550,6 +556,9 @@ export default function Overshare() {
       usedCategories: newUsedCategories
     });
     
+    setCurrentTurnIndex(nextTurnIndex);
+    setAvailableCategories(newAvailableCategories);
+    setUsedCategories(newUsedCategories);
     setGameState('categoryPicking');
   };
 
@@ -904,7 +913,7 @@ export default function Overshare() {
 
   // Category Picking Screen (Turn-based)
   if (gameState === 'categoryPicking') {
-    const currentPlayer = players[currentTurnIndex];
+    const currentPlayer = players[currentTurnIndex] || players[0];
     const isMyTurn = currentPlayer?.name === playerName;
     
     return (
@@ -923,32 +932,39 @@ export default function Overshare() {
                 <p className="text-gray-600">{currentPlayer?.name} is choosing a category...</p>
               </>
             )}
+            <p className="text-sm text-gray-500 mt-2">Round {Math.floor(turnHistory.length / players.length) + 1}</p>
           </div>
           
           {isMyTurn ? (
             <div className="space-y-3">
-              {availableCategories.map((categoryKey) => {
-                const category = questionCategories[categoryKey];
-                const IconComponent = category.icon;
-                
-                return (
-                  <button
-                    key={categoryKey}
-                    onClick={() => handleCategoryPicked(categoryKey)}
-                    className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-purple-500 hover:bg-purple-50 transition-all text-left"
-                  >
-                    <div className="flex items-start space-x-3">
-                      <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
-                        <IconComponent className="w-4 h-4 text-white" />
+              {availableCategories.length > 0 ? (
+                availableCategories.map((categoryKey) => {
+                  const category = questionCategories[categoryKey];
+                  const IconComponent = category.icon;
+                  
+                  return (
+                    <button
+                      key={categoryKey}
+                      onClick={() => handleCategoryPicked(categoryKey)}
+                      className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-purple-500 hover:bg-purple-50 transition-all text-left"
+                    >
+                      <div className="flex items-start space-x-3">
+                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
+                          <IconComponent className="w-4 h-4 text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-800">{category.name}</h3>
+                          <p className="text-sm text-gray-600 mt-1">{category.description}</p>
+                        </div>
                       </div>
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-gray-800">{category.name}</h3>
-                        <p className="text-sm text-gray-600 mt-1">{category.description}</p>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="text-center p-4 bg-gray-50 rounded-xl">
+                  <p className="text-gray-600">All categories have been used! Categories will reset for the next round.</p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center">
@@ -986,7 +1002,7 @@ export default function Overshare() {
   if (gameState === 'playing') {
     const currentCategoryData = questionCategories[currentCategory];
     const IconComponent = currentCategoryData?.icon || MessageCircle;
-    const currentPlayer = players[currentTurnIndex];
+    const currentPlayer = players[currentTurnIndex] || players[0];
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1005,7 +1021,8 @@ export default function Overshare() {
               </div>
             )}
             
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">{currentPlayer?.name}'s Question</h2>
+            <h2 className="text-lg font-semibold text-gray-800 mb-2">{currentPlayer?.name}'s Question</h2>
+            <p className="text-sm text-gray-500 mb-4">Round {Math.floor(turnHistory.length / players.length) + 1} • Turn {(turnHistory.length % players.length) + 1} of {players.length}</p>
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-2xl border-l-4 border-purple-500">
               <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
             </div>
@@ -1017,7 +1034,7 @@ export default function Overshare() {
                 onClick={handleNextQuestion}
                 className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
               >
-                Next Player's Turn
+                Next Player's Turn ({players[(currentTurnIndex + 1) % players.length]?.name})
               </button>
             )}
             
