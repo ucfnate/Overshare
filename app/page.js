@@ -1247,7 +1247,7 @@ export default function Overshare() {
             </button>
           )}
           
-     {isHost && !isNewPlayer && (
+    {isHost && !isNewPlayer && (
             <button
               onClick={async () => {
                 // Move everyone to category voting after all players joined
@@ -1259,9 +1259,6 @@ export default function Overshare() {
               disabled={players.length < 2}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Everyone's Here - Continue
-            </button>
-          )}
               Start Game
             </button>
           )}className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
