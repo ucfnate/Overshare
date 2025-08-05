@@ -577,10 +577,7 @@ export default function Overshare() {
     } catch (error) {
       console.error('Error updating player data:', error);
     }
-  };waitingRoom');
-        } else {
-          setGameState('categorySelection');
-        }
+  };
       }
     } catch (error) {
       console.error('Error updating player data:', error);
