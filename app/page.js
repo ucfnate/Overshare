@@ -578,11 +578,6 @@ export default function Overshare() {
       console.error('Error updating player data:', error);
     }
   };
-      }
-    } catch (error) {
-      console.error('Error updating player data:', error);
-    }
-  };
 
   const handleCategoryVote = async (selectedCats) => {
     try {
