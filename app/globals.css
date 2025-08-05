@@ -68,6 +68,28 @@
   .to-pink-50 {
     --tw-gradient-to: rgb(55, 65, 81) !important; /* gray-700 */
   }
+
+  /* Override input and form elements */
+  input {
+    background-color: rgb(55, 65, 81) !important; /* gray-700 */
+    color: rgb(243, 244, 246) !important; /* gray-100 */
+    border-color: rgb(75, 85, 99) !important; /* gray-600 */
+  }
+
+  input::placeholder {
+    color: rgb(156, 163, 175) !important; /* gray-400 */
+  }
+
+  input:focus {
+    border-color: rgb(147, 51, 234) !important; /* purple-600 */
+    background-color: rgb(55, 65, 81) !important; /* gray-700 */
+    color: rgb(243, 244, 246) !important; /* gray-100 */
+  }
+
+  /* Override any remaining white text that should be visible */
+  .text-white {
+    color: rgb(243, 244, 246) !important; /* Keep white text visible */
+  }
 }
 
 body {
