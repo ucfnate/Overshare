@@ -573,7 +573,7 @@ export default function Overshare() {
         
         // Go to category voting
         setGameState('categoryVoting');
-      }
+      
     } catch (error) {
       console.error('Error updating player data:', error);
     }
