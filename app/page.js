@@ -467,6 +467,10 @@ export default function Overshare() {
           setGameState('categoryPicking');
         } else if (data.gameState === 'categoryVoting' && gameState !== 'categoryVoting') {
           setGameState('categoryVoting');
+        } else if (data.gameState === 'relationshipSurvey' && gameState !== 'relationshipSurvey') {
+          setGameState('relationshipSurvey');
+        } else if (data.gameState === 'waitingForHost' && gameState !== 'waitingForHost') {
+          setGameState('waitingForHost');
         }
       } else {
         console.log('❌ Session document does not exist');
@@ -536,11 +540,13 @@ export default function Overshare() {
         const sessionData = sessionSnap.data();
         setPlayers(sessionData.players);
         setSelectedCategories(sessionData.selectedCategories || []);
-        setGameState('relationshipSurvey');
         setSessionCode(sessionCode.trim().toUpperCase());
         
         // Start listening to session updates
         listenToSession(sessionCode.trim().toUpperCase());
+        
+        // Go to waiting room first, not relationship survey
+        setGameState('waitingRoom');
       } else {
         alert('Session not found. Please check the code and try again.');
       }
@@ -726,7 +732,7 @@ export default function Overshare() {
               placeholder="Enter your name"
               value={playerName}
               onChange={(e) => setPlayerName(e.target.value)}
-              className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg"
+              className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white text-gray-900"
             />
           </div>
           
@@ -833,7 +839,7 @@ export default function Overshare() {
                 placeholder="Enter session code"
                 value={sessionCode}
                 onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono"
+                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white text-gray-900"
               />
               <button
                 onClick={handleJoinSession}
@@ -922,6 +928,7 @@ export default function Overshare() {
     const allVotes = Object.values(categoryVotes);
     const totalVotes = allVotes.length;
     const waitingFor = players.filter(p => !categoryVotes[p.name]).map(p => p.name);
+    const allPlayersVoted = players.every(p => categoryVotes[p.name] && categoryVotes[p.name].length > 0);
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1017,7 +1024,22 @@ export default function Overshare() {
                 </div>
               </div>
               
-              {waitingFor.length > 0 ? (
+              {allPlayersVoted && isHost ? (
+                <div className="space-y-3">
+                  <p className="text-center text-gray-600 mb-4">All players have voted!</p>
+                  <button
+                    onClick={() => {
+                      updateDoc(doc(db, 'sessions', sessionCode), {
+                        gameState: 'waitingForHost'
+                      });
+                      setGameState('waitingForHost');
+                    }}
+                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+                  >
+                    View Results & Start Game
+                  </button>
+                </div>
+              ) : waitingFor.length > 0 ? (
                 <div className="text-center">
                   <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
                     <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
@@ -1025,7 +1047,7 @@ export default function Overshare() {
                   <p className="text-gray-600 mb-2">Waiting for:</p>
                   <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
                   
-                  {isHost && players.length === 1 && (
+                  {isHost && (
                     <button
                       onClick={() => {
                         updateDoc(doc(db, 'sessions', sessionCode), {
@@ -1035,13 +1057,14 @@ export default function Overshare() {
                       }}
                       className="mt-4 text-sm text-purple-600 hover:text-purple-700 underline"
                     >
-                      Start with just my categories
+                      Continue without waiting
                     </button>
                   )}
                 </div>
               ) : (
                 <div className="text-center">
                   <p className="text-gray-600">All players have voted!</p>
+                  {!isHost && <p className="text-sm text-gray-500 mt-2">Waiting for host to start the game...</p>}
                 </div>
               )}
             </div>
@@ -1116,6 +1139,8 @@ export default function Overshare() {
 
   // Waiting Room Screen
   if (gameState === 'waitingRoom') {
+    const isNewPlayer = !players.find(p => p.name === playerName);
+    
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
@@ -1157,18 +1182,56 @@ export default function Overshare() {
             </div>
           )}
           
-          {isHost && (
+          {isNewPlayer && (
             <button
-              onClick={handleStartGame}
-              disabled={players.length < 2}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={async () => {
+                // Add player to session
+                const newPlayer = {
+                  id: Date.now().toString(),
+                  name: playerName,
+                  isHost: false,
+                  surveyAnswers,
+                  joinedAt: new Date().toISOString()
+                };
+                
+                const sessionRef = doc(db, 'sessions', sessionCode);
+                const sessionSnap = await getDoc(sessionRef);
+                
+                if (sessionSnap.exists()) {
+                  const sessionData = sessionSnap.data();
+                  const updatedPlayers = [...sessionData.players, newPlayer];
+                  
+                  await updateDoc(sessionRef, {
+                    players: updatedPlayers
+                  });
+                  
+                  setPlayers(updatedPlayers);
+                }
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
             >
-              Start Game
+              Join Game
             </button>
           )}
           
-          {!isHost && (
-            <p className="text-gray-500">Waiting for host to start the game...</p>
+          {isHost && !isNewPlayer && (
+            <button
+              onClick={async () => {
+                // Move everyone to relationship survey
+                await updateDoc(doc(db, 'sessions', sessionCode), {
+                  gameState: 'relationshipSurvey'
+                });
+                setGameState('relationshipSurvey');
+              }}
+              disabled={players.length < 2}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Everyone's Here - Continue
+            </button>
+          )}
+          
+          {!isHost && !isNewPlayer && (
+            <p className="text-gray-500">Waiting for host to continue...</p>
           )}
         </div>
       </div>
