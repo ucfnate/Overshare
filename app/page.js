@@ -182,7 +182,7 @@ export default function Overshare() {
     }
   };
 
-// Smart category recommendation based on group composition and survey answers
+  // Smart category recommendation based on group composition and survey answers
   const recommendCategories = (players, relationships) => {
     const intimacyScore = calculateGroupIntimacy(relationships);
     const comfortLevel = getGroupComfortLevel(players);
@@ -276,28 +276,28 @@ export default function Overshare() {
   };
 
   // Firebase functions
-// Update your createFirebaseSession function to include turn data
-const createFirebaseSession = async (sessionCode, hostPlayer) => {
-  try {
-    await setDoc(doc(db, 'sessions', sessionCode), {
-      hostId: hostPlayer.id,
-      players: [hostPlayer],
-      currentQuestion: '',
-      gameState: 'waiting',
-      selectedCategories: [],
-      // NEW: Turn system data
-      currentTurnIndex: 0,
-      availableCategories: [],
-      usedCategories: [],
-      turnHistory: [], // Track who picked what
-      createdAt: serverTimestamp()
-    });
-    return true;
-  } catch (error) {
-    console.error('Error creating session:', error);
-    return false;
-  }
-};
+  // Update your createFirebaseSession function to include turn data
+  const createFirebaseSession = async (sessionCode, hostPlayer) => {
+    try {
+      await setDoc(doc(db, 'sessions', sessionCode), {
+        hostId: hostPlayer.id,
+        players: [hostPlayer],
+        currentQuestion: '',
+        gameState: 'waiting',
+        selectedCategories: [],
+        // NEW: Turn system data
+        currentTurnIndex: 0,
+        availableCategories: [],
+        usedCategories: [],
+        turnHistory: [], // Track who picked what
+        createdAt: serverTimestamp()
+      });
+      return true;
+    } catch (error) {
+      console.error('Error creating session:', error);
+      return false;
+    }
+  };
 
   const joinFirebaseSession = async (sessionCode, player) => {
     try {
@@ -344,94 +344,90 @@ const createFirebaseSession = async (sessionCode, hostPlayer) => {
     }
   };
 
-const listenToSession = (sessionCode) => {
-  console.log('🚀 Setting up listener for session:', sessionCode);
-  
-  const sessionRef = doc(db, 'sessions', sessionCode);
-  
-  const unsubscribe = onSnapshot(sessionRef, (doc) => {
-    console.log('🔥 Listener triggered! Doc exists:', doc.exists());
+  const listenToSession = (sessionCode) => {
+    console.log('🚀 Setting up listener for session:', sessionCode);
     
-    if (doc.exists()) {
-      const data = doc.data();
-      console.log('📊 Session data:', data);
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    
+    const unsubscribe = onSnapshot(sessionRef, (doc) => {
+      console.log('🔥 Listener triggered! Doc exists:', doc.exists());
       
-      // Update existing state
-      setPlayers([...data.players || []]);
-      setCurrentQuestion(data.currentQuestion || '');
-      setCurrentCategory(data.currentCategory || '');
-      setSelectedCategories([...data.selectedCategories || []]);
-      
-      // Update new turn-related state
-      setCurrentTurnIndex(data.currentTurnIndex || 0);
-      setAvailableCategories([...data.availableCategories || []]);
-      setUsedCategories([...data.usedCategories || []]);
-      setTurnHistory([...data.turnHistory || []]);
-      
-      if (data.gameState === 'playing' && gameState !== 'playing') {
-        setGameState('playing');
+      if (doc.exists()) {
+        const data = doc.data();
+        console.log('📊 Session data:', data);
+        
+        // Update existing state
+        setPlayers([...data.players || []]);
+        setCurrentQuestion(data.currentQuestion || '');
+        setCurrentCategory(data.currentCategory || '');
+        setSelectedCategories([...data.selectedCategories || []]);
+        
+        // Update new turn-related state
+        setCurrentTurnIndex(data.currentTurnIndex || 0);
+        setAvailableCategories([...data.availableCategories || []]);
+        setUsedCategories([...data.usedCategories || []]);
+        setTurnHistory([...data.turnHistory || []]);
+        
+        if (data.gameState === 'playing' && gameState !== 'playing') {
+          setGameState('playing');
+        }
+      } else {
+        console.log('❌ Session document does not exist');
       }
-    } else {
-      console.log('❌ Session document does not exist');
-    }
-  }, (error) => {
-    console.error('❌ Firebase listener error:', error);
-  });
-  
-  window.currentSessionListener = unsubscribe;
-  return unsubscribe;
-};
-  
-  // Store the unsubscribe function directly (not in state)
-  window.currentSessionListener = unsubscribe;
-  
-  return unsubscribe;
-};
+    }, (error) => {
+      console.error('❌ Firebase listener error:', error);
+    });
+    
+    // Store the unsubscribe function directly (not in state)
+    window.currentSessionListener = unsubscribe;
+    
+    return unsubscribe;
+  };
 
   // Cleanup listener on unmount
-useEffect(() => {
-  return () => {
-    if (window.currentSessionListener) {
-      console.log('🧹 Cleaning up listener');
-      window.currentSessionListener();
-      window.currentSessionListener = null;
+  useEffect(() => {
+    return () => {
+      if (window.currentSessionListener) {
+        console.log('🧹 Cleaning up listener');
+        window.currentSessionListener();
+        window.currentSessionListener = null;
+      }
+    };
+  }, []);
+
+  const handleSurveySubmit = () => {
+    if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
+      setGameState('createOrJoin');
     }
   };
-}, []);
 
-const handleSurveySubmit = () => {
-  if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
-    setGameState('createOrJoin');
-  }
-};
-
-const handleCreateSession = async () => {
-  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const hostPlayer = {
-    id: Date.now().toString(),
-    name: playerName,
-    isHost: true,
-    surveyAnswers,
-    joinedAt: new Date().toISOString()
-  };
-  
-  const success = await createFirebaseSession(code, hostPlayer);
-  
-  if (success) {
-    setSessionCode(code);
-    setIsHost(true);
-    setPlayers([hostPlayer]);
-    setGameState('categorySelection');
+  const handleCreateSession = async () => {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const hostPlayer = {
+      id: Date.now().toString(),
+      name: playerName,
+      isHost: true,
+      surveyAnswers,
+      joinedAt: new Date().toISOString()
+    };
     
-    // Add delay before listener
-    setTimeout(() => {
-      console.log('Starting listener after delay');
-      listenToSession(code);
-    }, 1000);
-  } else {
-    alert('Failed to create session. Please try again.');
-  }
-};
+    const success = await createFirebaseSession(code, hostPlayer);
+    
+    if (success) {
+      setSessionCode(code);
+      setIsHost(true);
+      setPlayers([hostPlayer]);
+      setGameState('categorySelection');
+      
+      // Add delay before listener
+      setTimeout(() => {
+        console.log('Starting listener after delay');
+        listenToSession(code);
+      }, 1000);
+    } else {
+      alert('Failed to create session. Please try again.');
+    }
+  };
 
   const handleJoinSession = async () => {
     if (sessionCode.trim()) {
@@ -514,7 +510,7 @@ const handleCreateSession = async () => {
     setCurrentQuestion(question);
   };
 
-// Welcome Screen
+  // Welcome Screen
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -720,7 +716,7 @@ const handleCreateSession = async () => {
     );
   }
 
-// Category Selection Screen
+  // Category Selection Screen
   if (gameState === 'categorySelection') {
     const recommended = recommendCategories(players, relationshipAnswers);
     
