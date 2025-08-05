@@ -518,7 +518,7 @@ export default function Overshare() {
       setSessionCode(code);
       setIsHost(true);
       setPlayers([hostPlayer]);
-      setGameState('categoryVoting');
+      setGameState('waitingRoom');
       
       // Add delay before listener
       setTimeout(() => {
@@ -554,31 +554,37 @@ export default function Overshare() {
   };
 
   const handleRelationshipSurveySubmit = async () => {
-    // Create the player object when relationship survey is complete
-    const currentPlayer = {
-      id: Date.now().toString(),
-      name: playerName,
-      isHost: false,
-      surveyAnswers,
-      relationshipAnswers,
-      joinedAt: new Date().toISOString()
-    };
-    
+    // Don't create a new player - they already exist
+    // Just update with relationship data
     try {
       const sessionRef = doc(db, 'sessions', sessionCode);
       const sessionSnap = await getDoc(sessionRef);
       
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
-        // Add the new player to the session
-        const updatedPlayers = [...sessionData.players, currentPlayer];
+        const updatedPlayers = sessionData.players.map(p => 
+          p.name === playerName 
+            ? { ...p, relationshipAnswers } 
+            : p
+        );
         
         await updateDoc(sessionRef, {
           players: updatedPlayers
         });
         
-        // Go to category voting
-        setGameState('categoryVoting');
+        // Check if all players have completed relationship survey
+        const allCompleted = updatedPlayers.every(p => p.relationshipAnswers);
+        
+        if (allCompleted) {
+          // Move to category picking for first player
+          await updateDoc(sessionRef, {
+            gameState: 'categoryPicking'
+          });
+          setGameState('categoryPicking');
+        } else {
+          // Wait for others
+          setGameState('waitingForOthers');
+        }
       }
     } catch (error) {
       console.error('Error updating player data:', error);
@@ -1074,7 +1080,7 @@ export default function Overshare() {
     );
   }
 
-  // Waiting for Host Screen
+  // Waiting for Host Screen (After Category Voting)
   if (gameState === 'waitingForHost') {
     const voteResults = {};
     Object.values(categoryVotes).forEach(votes => {
@@ -1124,13 +1130,19 @@ export default function Overshare() {
           
           {isHost ? (
             <button
-              onClick={handleStartGame}
+              onClick={async () => {
+                // Move everyone to relationship survey
+                await updateDoc(doc(db, 'sessions', sessionCode), {
+                  gameState: 'relationshipSurvey'
+                });
+                setGameState('relationshipSurvey');
+              }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
             >
-              Start Game with Top {topCategories.length} Categories
+              Continue to Relationship Survey
             </button>
           ) : (
-            <p className="text-gray-500">Waiting for {players.find(p => p.isHost)?.name} to start the game...</p>
+            <p className="text-gray-500">Waiting for {players.find(p => p.isHost)?.name} to continue...</p>
           )}
         </div>
       </div>
@@ -1217,14 +1229,18 @@ export default function Overshare() {
           {isHost && !isNewPlayer && (
             <button
               onClick={async () => {
-                // Move everyone to relationship survey
+                // Move everyone to category voting after all players joined
                 await updateDoc(doc(db, 'sessions', sessionCode), {
-                  gameState: 'relationshipSurvey'
+                  gameState: 'categoryVoting'
                 });
-                setGameState('relationshipSurvey');
+                setGameState('categoryVoting');
               }}
               disabled={players.length < 2}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Game
+            </button>
+          )}className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Everyone's Here - Continue
             </button>
@@ -1330,6 +1346,7 @@ export default function Overshare() {
     const currentCategoryData = questionCategories[currentCategory];
     const IconComponent = currentCategoryData?.icon || MessageCircle;
     const currentPlayer = players[currentTurnIndex] || players[0];
+    const isMyTurn = currentPlayer?.name === playerName;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1356,13 +1373,17 @@ export default function Overshare() {
           </div>
           
           <div className="space-y-4">
-            {isHost && (
+            {isMyTurn ? (
               <button
                 onClick={handleNextQuestion}
                 className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
               >
-                Next Player's Turn ({players[(currentTurnIndex + 1) % players.length]?.name})
+                Pass to {players[(currentTurnIndex + 1) % players.length]?.name}
               </button>
+            ) : (
+              <div className="text-center">
+                <p className="text-gray-600">Waiting for {currentPlayer?.name} to finish their turn...</p>
+              </div>
             )}
             
             <button
@@ -1372,6 +1393,38 @@ export default function Overshare() {
               Back to Lobby
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Waiting for Others Screen (After Relationship Survey)
+  if (gameState === 'waitingForOthers') {
+    const playersWithRelationships = players.filter(p => p.relationshipAnswers);
+    const waitingFor = players.filter(p => !p.relationshipAnswers).map(p => p.name);
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Thanks!</h2>
+            <p className="text-gray-600">Waiting for others to complete their surveys...</p>
+          </div>
+          
+          <div className="mb-4">
+            <p className="text-lg text-gray-700">{playersWithRelationships.length} of {players.length} completed</p>
+          </div>
+          
+          {waitingFor.length > 0 && (
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+              <p className="text-gray-600 mb-2">Still waiting for:</p>
+              <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
+            </div>
+          )}
         </div>
       </div>
     );
