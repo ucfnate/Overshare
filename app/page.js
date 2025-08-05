@@ -1149,110 +1149,106 @@ export default function Overshare() {
     );
   }
 
-  // Waiting Room Screen
-  if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find(p => p.name === playerName);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Session {sessionCode}</h2>
-            <p className="text-gray-600">Share this code with others to join</p>
-          </div>
-          
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-3">Players ({players.length})</h3>
-            <div className="space-y-2">
-              {players.map((player, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                  <span className="font-medium">{player.name}</span>
-                  {player.isHost && <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded-full">Host</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {selectedCategories.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
-              <div className="flex flex-wrap gap-2">
-                {selectedCategories.map(categoryKey => {
-                  const category = questionCategories[categoryKey];
-                  const IconComponent = category.icon;
-                  return (
-                    <div
-                      key={categoryKey}
-                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category.color} text-white text-sm`}
-                    >
-                      <IconComponent className="w-4 h-4" />
-                      <span>{category.name}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          
-          {isNewPlayer && (
-            <button
-              onClick={async () => {
-                // Add player to session
-                const newPlayer = {
-                  id: Date.now().toString(),
-                  name: playerName,
-                  isHost: false,
-                  surveyAnswers,
-                  joinedAt: new Date().toISOString()
-                };
-                
-                const sessionRef = doc(db, 'sessions', sessionCode);
-                const sessionSnap = await getDoc(sessionRef);
-                
-                if (sessionSnap.exists()) {
-                  const sessionData = sessionSnap.data();
-                  const updatedPlayers = [...sessionData.players, newPlayer];
-                  
-                  await updateDoc(sessionRef, {
-                    players: updatedPlayers
-                  });
-                  
-                  setPlayers(updatedPlayers);
-                }
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
-            >
-              Join Game
-            </button>
-          )}
-          
-          {isHost && !isNewPlayer && (
-            <button
-              onClick={async () => {
-                // Move everyone to category voting after all players joined
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  gameState: 'categoryVoting'
-                });
-                setGameState('categoryVoting');
-              }}
-              disabled={players.length < 2}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Start Game
-            </button>
-          )}className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Everyone's Here - Continue
-            </button>
-          )}
-          
-          {!isHost && !isNewPlayer && (
-            <p className="text-gray-500">Waiting for host to continue...</p>
-          )}
+// Waiting Room Screen
+if (gameState === 'waitingRoom') {
+  const isNewPlayer = !players.find(p => p.name === playerName);
+  
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Session {sessionCode}</h2>
+          <p className="text-gray-600">Share this code with others to join</p>
         </div>
+        
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold text-gray-800 mb-3">Players ({players.length})</h3>
+          <div className="space-y-2">
+            {players.map((player, index) => (
+              <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <span className="font-medium">{player.name}</span>
+                {player.isHost && <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded-full">Host</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {selectedCategories.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
+            <div className="flex flex-wrap gap-2">
+              {selectedCategories.map(categoryKey => {
+                const category = questionCategories[categoryKey];
+                const IconComponent = category.icon;
+                return (
+                  <div
+                    key={categoryKey}
+                    className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category.color} text-white text-sm`}
+                  >
+                    <IconComponent className="w-4 h-4" />
+                    <span>{category.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        
+        {isNewPlayer && (
+          <button
+            onClick={async () => {
+              // Add player to session
+              const newPlayer = {
+                id: Date.now().toString(),
+                name: playerName,
+                isHost: false,
+                surveyAnswers,
+                joinedAt: new Date().toISOString()
+              };
+              
+              const sessionRef = doc(db, 'sessions', sessionCode);
+              const sessionSnap = await getDoc(sessionRef);
+              
+              if (sessionSnap.exists()) {
+                const sessionData = sessionSnap.data();
+                const updatedPlayers = [...sessionData.players, newPlayer];
+                
+                await updateDoc(sessionRef, {
+                  players: updatedPlayers
+                });
+                
+                setPlayers(updatedPlayers);
+              }
+            }}
+            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
+          >
+            Join Game
+          </button>
+        )}
+        
+        {isHost && !isNewPlayer && (
+          <button
+            onClick={async () => {
+              // Move everyone to category voting after all players joined
+              await updateDoc(doc(db, 'sessions', sessionCode), {
+                gameState: 'categoryVoting'
+              });
+              setGameState('categoryVoting');
+            }}
+            disabled={players.length < 2}
+            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Start Game
+          </button>
+        )}
+        
+        {!isHost && !isNewPlayer && (
+          <p className="text-gray-500">Waiting for host to continue...</p>
+        )}
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   // Category Picking Screen (Turn-based)
   if (gameState === 'categoryPicking') {
