@@ -2,21 +2,82 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Remove the problematic CSS custom properties approach */
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 214, 219, 220;
+  --background-end-rgb: 255, 255, 255;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 0, 0, 0;
+  }
+
+  /* Override white backgrounds in dark mode */
+  .bg-white {
+    background-color: rgb(31, 41, 55) !important; /* gray-800 */
+  }
+
+  /* Override dark text colors in dark mode */
+  .text-gray-800 {
+    color: rgb(243, 244, 246) !important; /* gray-100 */
+  }
+
+  .text-gray-600 {
+    color: rgb(156, 163, 175) !important; /* gray-400 */
+  }
+
+  .text-gray-500 {
+    color: rgb(156, 163, 175) !important; /* gray-400 */
+  }
+
+  /* Override light backgrounds */
+  .bg-gray-50 {
+    background-color: rgb(55, 65, 81) !important; /* gray-700 */
+  }
+
+  .bg-gray-100 {
+    background-color: rgb(55, 65, 81) !important; /* gray-700 */
+  }
+
+  /* Override border colors */
+  .border-gray-200 {
+    border-color: rgb(75, 85, 99) !important; /* gray-600 */
+  }
+
+  .border-gray-300 {
+    border-color: rgb(75, 85, 99) !important; /* gray-600 */
+  }
+
+  /* Override hover states */
+  .hover\:bg-purple-50:hover {
+    background-color: rgb(55, 65, 81) !important; /* gray-700 */
+  }
+
+  .hover\:bg-gray-50:hover {
+    background-color: rgb(55, 65, 81) !important; /* gray-700 */
+  }
+
+  /* Override gradient backgrounds for question boxes */
+  .from-purple-50 {
+    --tw-gradient-from: rgb(55, 65, 81) !important; /* gray-700 */
+  }
+
+  .to-pink-50 {
+    --tw-gradient-to: rgb(55, 65, 81) !important; /* gray-700 */
+  }
+}
+
 body {
-  @apply bg-gradient-to-b from-gray-50 to-white text-gray-900;
-  @apply dark:from-gray-900 dark:to-black dark:text-white;
-  min-height: 100vh;
-}
-
-/* Ensure the html and root elements also get proper dark mode styling */
-html {
-  @apply dark:bg-gray-900;
-}
-
-/* Override any default white backgrounds in dark mode */
-* {
-  @apply dark:border-gray-700;
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb));
 }
 
 /* Custom scrollbar for better mobile experience */
@@ -25,13 +86,32 @@ html {
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100 dark:bg-gray-800;
+  background: #f1f1f1;
+}
+
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-track {
+    background: #374151; /* gray-700 */
+  }
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 dark:bg-gray-600 rounded-sm;
+  background: #c1c1c1;
+  border-radius: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb {
+    background: #6b7280; /* gray-500 */
+  }
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400 dark:bg-gray-500;
+  background: #a1a1a1;
+}
+
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af; /* gray-400 */
+  }
 }
