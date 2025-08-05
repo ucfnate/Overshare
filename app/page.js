@@ -368,8 +368,11 @@ export default function Overshare() {
         setUsedCategories([...data.usedCategories || []]);
         setTurnHistory([...data.turnHistory || []]);
         
+        // Handle game state transitions
         if (data.gameState === 'playing' && gameState !== 'playing') {
           setGameState('playing');
+        } else if (data.gameState === 'categoryPicking' && gameState !== 'categoryPicking') {
+          setGameState('categoryPicking');
         }
       } else {
         console.log('❌ Session document does not exist');
@@ -431,20 +434,16 @@ export default function Overshare() {
 
   const handleJoinSession = async () => {
     if (sessionCode.trim()) {
-      const player = {
-        id: Date.now().toString(),
-        name: playerName,
-        isHost: false,
-        surveyAnswers,
-        joinedAt: new Date().toISOString()
-      };
+      // Don't add player yet - just check if session exists
+      const sessionRef = doc(db, 'sessions', sessionCode.trim().toUpperCase());
+      const sessionSnap = await getDoc(sessionRef);
       
-      const sessionData = await joinFirebaseSession(sessionCode.trim().toUpperCase(), player);
-      
-      if (sessionData) {
+      if (sessionSnap.exists()) {
+        const sessionData = sessionSnap.data();
         setPlayers(sessionData.players);
         setSelectedCategories(sessionData.selectedCategories || []);
         setGameState('relationshipSurvey');
+        setSessionCode(sessionCode.trim().toUpperCase());
         
         // Start listening to session updates
         listenToSession(sessionCode.trim().toUpperCase());
@@ -455,6 +454,7 @@ export default function Overshare() {
   };
 
   const handleRelationshipSurveySubmit = async () => {
+    // Create the player object when relationship survey is complete
     const currentPlayer = {
       id: Date.now().toString(),
       name: playerName,
@@ -470,9 +470,8 @@ export default function Overshare() {
       
       if (sessionSnap.exists()) {
         const sessionData = sessionSnap.data();
-        const updatedPlayers = sessionData.players.map(p => 
-          p.name === playerName ? currentPlayer : p
-        );
+        // Add the new player to the session
+        const updatedPlayers = [...sessionData.players, currentPlayer];
         
         await updateDoc(sessionRef, {
           players: updatedPlayers
@@ -498,16 +497,60 @@ export default function Overshare() {
   };
 
   const handleStartGame = async () => {
-    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers);
-    await updateGameQuestion(sessionCode, question, currentCategory);
+    // Initialize turn-based system
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      gameState: 'categoryPicking',
+      currentTurnIndex: 0,
+      availableCategories: selectedCategories,
+      usedCategories: [],
+      turnHistory: []
+    });
+    setGameState('categoryPicking');
+  };
+
+  const handleCategoryPicked = async (category) => {
+    const currentPlayer = players[currentTurnIndex];
+    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, category);
+    
+    // Update Firebase with the selected category and question
+    const newUsedCategories = [...usedCategories, category];
+    const newAvailableCategories = availableCategories.filter(c => c !== category);
+    const newTurnHistory = [...turnHistory, {
+      player: currentPlayer.name,
+      category: category,
+      question: question
+    }];
+    
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      currentQuestion: question,
+      currentCategory: category,
+      gameState: 'playing',
+      usedCategories: newUsedCategories,
+      availableCategories: newAvailableCategories,
+      turnHistory: newTurnHistory,
+      currentQuestionAsker: currentPlayer.name
+    });
+    
     setCurrentQuestion(question);
     setGameState('playing');
   };
 
   const handleNextQuestion = async () => {
-    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers);
-    await updateGameQuestion(sessionCode, question, currentCategory);
-    setCurrentQuestion(question);
+    // Move to next player's turn
+    const nextTurnIndex = (currentTurnIndex + 1) % players.length;
+    
+    // If we've used all categories, reset the available categories
+    const newAvailableCategories = availableCategories.length === 0 ? selectedCategories : availableCategories;
+    const newUsedCategories = availableCategories.length === 0 ? [] : usedCategories;
+    
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      gameState: 'categoryPicking',
+      currentTurnIndex: nextTurnIndex,
+      availableCategories: newAvailableCategories,
+      usedCategories: newUsedCategories
+    });
+    
+    setGameState('categoryPicking');
   };
 
   // Welcome Screen
@@ -655,9 +698,11 @@ export default function Overshare() {
   // Relationship Survey Screen
   if (gameState === 'relationshipSurvey') {
     const currentPlayerIndex = Object.keys(relationshipAnswers).length;
-    const currentPlayer = players[currentPlayerIndex];
+    // Filter out yourself from the players list
+    const otherPlayers = players.filter(p => p.name !== playerName);
+    const currentPlayer = otherPlayers[currentPlayerIndex];
     
-    if (currentPlayerIndex >= players.length) {
+    if (currentPlayerIndex >= otherPlayers.length) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
@@ -683,11 +728,11 @@ export default function Overshare() {
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {players.length}</span>
+              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {otherPlayers.length}</span>
               <div className="w-16 h-2 bg-gray-200 rounded-full">
                 <div 
                   className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
-                  style={{ width: `${((currentPlayerIndex + 1) / players.length) * 100}%` }}
+                  style={{ width: `${((currentPlayerIndex + 1) / otherPlayers.length) * 100}%` }}
                 ></div>
               </div>
             </div>
@@ -857,10 +902,91 @@ export default function Overshare() {
     );
   }
 
+  // Category Picking Screen (Turn-based)
+  if (gameState === 'categoryPicking') {
+    const currentPlayer = players[currentTurnIndex];
+    const isMyTurn = currentPlayer?.name === playerName;
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            {isMyTurn ? (
+              <>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">Your Turn!</h2>
+                <p className="text-gray-600">Choose a category for the next question</p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">{currentPlayer?.name}'s Turn</h2>
+                <p className="text-gray-600">{currentPlayer?.name} is choosing a category...</p>
+              </>
+            )}
+          </div>
+          
+          {isMyTurn ? (
+            <div className="space-y-3">
+              {availableCategories.map((categoryKey) => {
+                const category = questionCategories[categoryKey];
+                const IconComponent = category.icon;
+                
+                return (
+                  <button
+                    key={categoryKey}
+                    onClick={() => handleCategoryPicked(categoryKey)}
+                    className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-purple-500 hover:bg-purple-50 transition-all text-left"
+                  >
+                    <div className="flex items-start space-x-3">
+                      <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
+                        <IconComponent className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-800">{category.name}</h3>
+                        <p className="text-sm text-gray-600 mt-1">{category.description}</p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+              <p className="text-gray-500">Waiting for {currentPlayer?.name} to choose...</p>
+            </div>
+          )}
+          
+          {usedCategories.length > 0 && (
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
+              <div className="flex flex-wrap gap-2">
+                {usedCategories.map(categoryKey => {
+                  const category = questionCategories[categoryKey];
+                  return (
+                    <span
+                      key={categoryKey}
+                      className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full"
+                    >
+                      {category.name}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // Playing Screen
   if (gameState === 'playing') {
     const currentCategoryData = questionCategories[currentCategory];
     const IconComponent = currentCategoryData?.icon || MessageCircle;
+    const currentPlayer = players[currentTurnIndex];
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -879,7 +1005,7 @@ export default function Overshare() {
               </div>
             )}
             
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Question for Everyone</h2>
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">{currentPlayer?.name}'s Question</h2>
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-2xl border-l-4 border-purple-500">
               <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
             </div>
@@ -891,7 +1017,7 @@ export default function Overshare() {
                 onClick={handleNextQuestion}
                 className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
               >
-                Next Question
+                Next Player's Turn
               </button>
             )}
             
