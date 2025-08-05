@@ -24,6 +24,12 @@ export default function Overshare() {
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [isHost, setIsHost] = useState(false);
   const [sessionListener, setSessionListener] = useState(null);
+  // Add these state variables with your existing ones
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
+  const [availableCategories, setAvailableCategories] = useState([]);
+  const [usedCategories, setUsedCategories] = useState([]);
+  const [turnHistory, setTurnHistory] = useState([]);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
 
   const initialSurveyQuestions = [
     {
@@ -270,22 +276,28 @@ export default function Overshare() {
   };
 
   // Firebase functions
-  const createFirebaseSession = async (sessionCode, hostPlayer) => {
-    try {
-      await setDoc(doc(db, 'sessions', sessionCode), {
-        hostId: hostPlayer.id,
-        players: [hostPlayer],
-        currentQuestion: '',
-        gameState: 'waiting',
-        selectedCategories: [],
-        createdAt: serverTimestamp()
-      });
-      return true;
-    } catch (error) {
-      console.error('Error creating session:', error);
-      return false;
-    }
-  };
+// Update your createFirebaseSession function to include turn data
+const createFirebaseSession = async (sessionCode, hostPlayer) => {
+  try {
+    await setDoc(doc(db, 'sessions', sessionCode), {
+      hostId: hostPlayer.id,
+      players: [hostPlayer],
+      currentQuestion: '',
+      gameState: 'waiting',
+      selectedCategories: [],
+      // NEW: Turn system data
+      currentTurnIndex: 0,
+      availableCategories: [],
+      usedCategories: [],
+      turnHistory: [], // Track who picked what
+      createdAt: serverTimestamp()
+    });
+    return true;
+  } catch (error) {
+    console.error('Error creating session:', error);
+    return false;
+  }
+};
 
   const joinFirebaseSession = async (sessionCode, player) => {
     try {
@@ -343,13 +355,18 @@ const listenToSession = (sessionCode) => {
     if (doc.exists()) {
       const data = doc.data();
       console.log('📊 Session data:', data);
-      console.log('👥 Players:', data.players);
       
-      // Force update the players state
+      // Update existing state
       setPlayers([...data.players || []]);
       setCurrentQuestion(data.currentQuestion || '');
       setCurrentCategory(data.currentCategory || '');
       setSelectedCategories([...data.selectedCategories || []]);
+      
+      // Update new turn-related state
+      setCurrentTurnIndex(data.currentTurnIndex || 0);
+      setAvailableCategories([...data.availableCategories || []]);
+      setUsedCategories([...data.usedCategories || []]);
+      setTurnHistory([...data.turnHistory || []]);
       
       if (data.gameState === 'playing' && gameState !== 'playing') {
         setGameState('playing');
@@ -360,6 +377,10 @@ const listenToSession = (sessionCode) => {
   }, (error) => {
     console.error('❌ Firebase listener error:', error);
   });
+  
+  window.currentSessionListener = unsubscribe;
+  return unsubscribe;
+};
   
   // Store the unsubscribe function directly (not in state)
   window.currentSessionListener = unsubscribe;
