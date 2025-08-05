@@ -1261,10 +1261,6 @@ export default function Overshare() {
             >
               Start Game
             </button>
-          )}className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Everyone's Here - Continue
-            </button>
           )}
           
           {!isHost && !isNewPlayer && (
