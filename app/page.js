@@ -597,18 +597,21 @@ export default function Overshare() {
         
         setMyVotedCategories(selectedCats);
         
-        // Check if all players have voted
-        const allPlayersVoted = sessionData.players.every(player => 
-          currentVotes[player.name] && currentVotes[player.name].length > 0
-        );
-        
-        if (allPlayersVoted && sessionData.players.length > 1) {
-          // Move to waiting room automatically
-          await updateDoc(sessionRef, {
-            gameState: 'waitingForHost'
-          });
-          setGameState('waitingForHost');
+        // Only check if all players have voted when there are multiple players
+        if (sessionData.players.length > 1) {
+          const allPlayersVoted = sessionData.players.every(player => 
+            currentVotes[player.name] && currentVotes[player.name].length > 0
+          );
+          
+          if (allPlayersVoted) {
+            // Move to waiting room automatically
+            await updateDoc(sessionRef, {
+              gameState: 'waitingForHost'
+            });
+            setGameState('waitingForHost');
+          }
         }
+        // If only one player (host), just stay in voting screen to show their votes
       }
     } catch (error) {
       console.error('Error submitting category votes:', error);
@@ -934,6 +937,9 @@ export default function Overshare() {
                 : 'Select 2-3 categories you\'d like to play with'
               }
             </p>
+            {hasVoted && (
+              <p className="text-sm text-gray-500 mt-2">Session Code: {sessionCode}</p>
+            )}
           </div>
           
           {!hasVoted ? (
@@ -1011,13 +1017,31 @@ export default function Overshare() {
                 </div>
               </div>
               
-              {waitingFor.length > 0 && (
+              {waitingFor.length > 0 ? (
                 <div className="text-center">
                   <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
                     <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
                   </div>
                   <p className="text-gray-600 mb-2">Waiting for:</p>
                   <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
+                  
+                  {isHost && players.length === 1 && (
+                    <button
+                      onClick={() => {
+                        updateDoc(doc(db, 'sessions', sessionCode), {
+                          gameState: 'waitingForHost'
+                        });
+                        setGameState('waitingForHost');
+                      }}
+                      className="mt-4 text-sm text-purple-600 hover:text-purple-700 underline"
+                    >
+                      Start with just my categories
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center">
+                  <p className="text-gray-600">All players have voted!</p>
                 </div>
               )}
             </div>
