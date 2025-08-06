@@ -35,9 +35,6 @@ export default function Overshare() {
   const [categoryVotes, setCategoryVotes] = useState({});
   const [myVotedCategories, setMyVotedCategories] = useState([]);
 
-  // Add this after your last useState (after line ~34)
-  const [myVotedCategories, setMyVotedCategories] = useState([]);
-
   // Icon mapping for imported question categories
   const iconMap = {
     'Sparkles': Sparkles,
