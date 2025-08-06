@@ -56,9 +56,6 @@ export default function Overshare() {
     };
     return acc;
   }, {});
-
-  const initialSurveyQuestions = [
-    // ... (this stays the same)
     
   const initialSurveyQuestions = [
     {
