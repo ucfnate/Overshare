@@ -779,14 +779,20 @@ export default function Overshare() {
                 
                 // Skip relationship survey if single player
                 if (players.length === 1) {
-                  await updateDoc(doc(db, 'sessions', sessionCode), {
-                    gameState: 'categoryPicking',
-                    currentTurnIndex: 0,
-                    selectedCategories: topCategories,
-                   availableCategories: topCategories,
-usedCategories: [],
-turnHistory: []
-});
+                 try {
+  // ... some code ...
+  await updateDoc(doc(db, 'sessions', sessionCode), {
+    currentTurnIndex: 0,
+    selectedCategories: topCategories,
+    availableCategories: topCategories,
+    usedCategories: [],
+    turnHistory: []
+  });
+  // ... maybe more code ...
+} catch (error) {
+  console.error('Error submitting category votes:', error);
+  addToast('Failed to submit votes', 'error');
+}
     } catch (error) {
       console.error('Error submitting category votes:', error);
       addToast('Failed to submit votes', 'error');
