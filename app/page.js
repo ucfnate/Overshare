@@ -789,10 +789,6 @@ export default function Overshare() {
     turnHistory: []
   });
   // ... maybe more code ...
-} catch (error) {
-  console.error('Error submitting category votes:', error);
-  addToast('Failed to submit votes', 'error');
-}
     } catch (error) {
       console.error('Error submitting category votes:', error);
       addToast('Failed to submit votes', 'error');
