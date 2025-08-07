@@ -38,17 +38,7 @@ export default function Overshare() {
   const [toasts, setToasts] = useState([]);
   const [isAnimating, setIsAnimating] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all transform hover:scale-105"
-            >
-              {players.length === 1 ? 'Start Playing!' : "Let's See How You Know Each Other"}
-            </button>
-          ) : (
-            <p className="text-gray-500 dark:text-gray-400">Waiting for {players.find(p => p.isHost)?.name} to continue...</p>
-          )}
-        </div>
-      </div>
-    );
-  }
+
 
   // Waiting Room Screen with copy button and player colors
   if (gameState === 'waitingRoom') {
