@@ -14,10 +14,10 @@ import {
 import { questionCategories as questionData } from '../lib/questionCategories';
 
 export default function Overshare() {
-                  });
-                  transitionToState('relationshipSurvey');
-                }
-              }}
+  const [gameState, setGameState] = useState('welcome');
+  const [playerName, setPlayerName] = useState('');
+  const [surveyAnswers, setSurveyAnswers] = useState({});
+  // ... rest of your state declarations
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all transform hover:scale-105"
             >
               {players.length === 1 ? 'Start Playing!' : "Let's See How You Know Each Other"}
