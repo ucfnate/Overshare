@@ -190,7 +190,7 @@ availableCategories: topCategories,
                     <button
                       key={categoryKey}
                       onClick={() => handleCategoryPicked(categoryKey)}
-                      className="w-full p-4 rounded-xl border-2 border-gray-200 dark:border-gray-600 hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-left transform hover:scale-102"
+                      className="w-full p-4 rounded-xl border-2 border-gray-200 dark:border-gray-600 hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-left transform hover:scale-105"
                     >
                       <div className="flex items-start space-x-3">
                         <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
