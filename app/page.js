@@ -17,7 +17,27 @@ export default function Overshare() {
   const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
   const [surveyAnswers, setSurveyAnswers] = useState({});
-  // ... rest of your state declarations
+  const [relationshipAnswers, setRelationshipAnswers] = useState({});
+  const [sessionCode, setSessionCode] = useState('');
+  const [players, setPlayers] = useState([]);
+  const [currentQuestion, setCurrentQuestion] = useState('');
+  const [currentCategory, setCurrentCategory] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const [isHost, setIsHost] = useState(false);
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
+  const [availableCategories, setAvailableCategories] = useState([]);
+  const [usedCategories, setUsedCategories] = useState([]);
+  const [turnHistory, setTurnHistory] = useState([]);
+  const [categoryVotes, setCategoryVotes] = useState({});
+  const [myVotedCategories, setMyVotedCategories] = useState([]);
+  
+  // New state for enhancements
+  const [questionHistory, setQuestionHistory] = useState([]);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [toasts, setToasts] = useState([]);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all transform hover:scale-105"
             >
               {players.length === 1 ? 'Start Playing!' : "Let's See How You Know Each Other"}
