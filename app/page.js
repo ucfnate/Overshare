@@ -783,7 +783,10 @@ export default function Overshare() {
                     gameState: 'categoryPicking',
                     currentTurnIndex: 0,
                     selectedCategories: topCategories,
-                    available      }
+                   availableCategories: topCategories,
+usedCategories: [],
+turnHistory: []
+});
     } catch (error) {
       console.error('Error submitting category votes:', error);
       addToast('Failed to submit votes', 'error');
