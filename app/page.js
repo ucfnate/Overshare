@@ -379,12 +379,6 @@ export default function Overshare() {
   }
 
   return null;
-}d On' : 'Sound Off'}</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   // Survey Screen with dark mode
   if (gameState === 'survey') {
