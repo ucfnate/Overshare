@@ -1,8 +1,9 @@
-availableCategories: topCategories,
-                    usedCategories: [],
-                    turnHistory: []
-                  });
-                  playSound('success');
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame, Copy, Check, Volume2, VolumeX, X, Bell, History } from 'lucide-react';
+import { db } from '../lib/firebase';
+// ... rest of imports
                   transitionToState('categoryPicking');
                 } else {
                   await updateDoc(doc(db, 'sessions', sessionCode), {
