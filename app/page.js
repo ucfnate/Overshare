@@ -3,13 +3,17 @@
 import React, { useState, useEffect } from 'react';
 import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame, Copy, Check, Volume2, VolumeX, X, Bell, History } from 'lucide-react';
 import { db } from '../lib/firebase';
-// ... rest of imports
-                  transitionToState('categoryPicking');
-                } else {
-                  await updateDoc(doc(db, 'sessions', sessionCode), {
-                    gameState: 'relationshipSurvey',
-                    selectedCategories: topCategories,
-                    availableCategories: topCategories
+import { 
+  doc, 
+  setDoc, 
+  getDoc, 
+  updateDoc, 
+  onSnapshot, 
+  serverTimestamp 
+} from 'firebase/firestore';
+import { questionCategories as questionData } from '../lib/questionCategories';
+
+export default function Overshare() {
                   });
                   transitionToState('relationshipSurvey');
                 }
