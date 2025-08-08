@@ -540,163 +540,7 @@ export default function Overshare() {
               <MessageCircle className="w-8 h-8 text-white" />
             </div>
             <h1 className="text-3xl font-bold text-gray-800 mb-2">Overshare</h1>
-            <p className="text-sm text-gray-500 mt-2">Round {Math.floor(turnHistory.length / players.length) + 1}</p>
-          </div>
-          
-          {isMyTurn ? (
-            <div className="space-y-3">
-              {availableCategories.length > 0 ? (
-                availableCategories.map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
-                  const IconComponent = category.icon;
-                  
-                  return (
-                    <button
-                      key={categoryKey}
-                      onClick={() => handleCategoryPicked(categoryKey)}
-                      className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-purple-500 hover:bg-purple-50 transition-all text-left"
-                    >
-                      <div className="flex items-start space-x-3">
-                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
-                          <IconComponent className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-gray-800">{category.name}</h3>
-                          <p className="text-sm text-gray-600 mt-1">{category.description}</p>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="text-center p-4 bg-gray-50 rounded-xl">
-                  <p className="text-gray-600">All categories have been used! Categories will reset for the next round.</p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
-                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-              </div>
-              <p className="text-gray-500">Waiting for {currentPlayer?.name} to choose...</p>
-            </div>
-          )}
-          
-          {usedCategories.length > 0 && (
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
-              <div className="flex flex-wrap gap-2">
-                {usedCategories.map(categoryKey => {
-                  const category = questionCategories[categoryKey];
-                  return (
-                    <span
-                      key={categoryKey}
-                      className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full"
-                    >
-                      {category.name}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Playing Screen
-  if (gameState === 'playing') {
-    const currentCategoryData = questionCategories[currentCategory];
-    const IconComponent = currentCategoryData?.icon || MessageCircle;
-    const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.name === playerName;
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6 text-center">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4">
-              <IconComponent className="w-6 h-6 text-white" />
-            </div>
-            
-            {currentCategoryData && (
-              <div className="mb-4">
-                <span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}>
-                  <IconComponent className="w-3 h-3" />
-                  <span>{currentCategoryData.name}</span>
-                </span>
-              </div>
-            )}
-            
-            <h2 className="text-lg font-semibold text-gray-800 mb-2">{currentPlayer?.name}'s Question</h2>
-            <p className="text-sm text-gray-500 mb-4">Round {Math.floor(turnHistory.length / players.length) + 1} • Turn {(turnHistory.length % players.length) + 1} of {players.length}</p>
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-2xl border-l-4 border-purple-500">
-              <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
-            </div>
-          </div>
-          
-          <div className="space-y-4">
-            {isMyTurn ? (
-              <button
-                onClick={handleNextQuestion}
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-              >
-                Pass to {players[(currentTurnIndex + 1) % players.length]?.name}
-              </button>
-            ) : (
-              <div className="text-center">
-                <p className="text-gray-600">Waiting for {currentPlayer?.name} to finish their turn...</p>
-              </div>
-            )}
-            
-            <button
-              onClick={() => setGameState('waitingRoom')}
-              className="w-full bg-white border-2 border-gray-300 text-gray-600 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 transition-all"
-            >
-              Back to Lobby
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Waiting for Others Screen (After Relationship Survey)
-  if (gameState === 'waitingForOthers') {
-    const playersWithRelationships = players.filter(p => p.relationshipAnswers);
-    const waitingFor = players.filter(p => !p.relationshipAnswers).map(p => p.name);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Thanks!</h2>
-            <p className="text-gray-600">Waiting for others to complete their surveys...</p>
-          </div>
-          
-          <div className="mb-4">
-            <p className="text-lg text-gray-700">{playersWithRelationships.length} of {players.length} completed</p>
-          </div>
-          
-          {waitingFor.length > 0 && (
-            <div className="text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
-                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-              </div>
-              <p className="text-gray-600 mb-2">Still waiting for:</p>
-              <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-}-gray-600">Personalized conversation games that bring people closer together</p>
+            <p className="text-gray-600">Personalized conversation games that bring people closer together</p>
           </div>
           
           <div className="mb-6">
@@ -1242,4 +1086,160 @@ export default function Overshare() {
                 <p className="text-gray-600">{currentPlayer?.name} is choosing a category...</p>
               </>
             )}
-            <p className="text
+            <p className="text-sm text-gray-500 mt-2">Round {Math.floor(turnHistory.length / players.length) + 1}</p>
+          </div>
+          
+          {isMyTurn ? (
+            <div className="space-y-3">
+              {availableCategories.length > 0 ? (
+                availableCategories.map((categoryKey) => {
+                  const category = questionCategories[categoryKey];
+                  const IconComponent = category.icon;
+                  
+                  return (
+                    <button
+                      key={categoryKey}
+                      onClick={() => handleCategoryPicked(categoryKey)}
+                      className="w-full p-4 rounded-xl border-2 border-gray-200 hover:border-purple-500 hover:bg-purple-50 transition-all text-left"
+                    >
+                      <div className="flex items-start space-x-3">
+                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
+                          <IconComponent className="w-4 h-4 text-white" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-800">{category.name}</h3>
+                          <p className="text-sm text-gray-600 mt-1">{category.description}</p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="text-center p-4 bg-gray-50 rounded-xl">
+                  <p className="text-gray-600">All categories have been used! Categories will reset for the next round.</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+              <p className="text-gray-500">Waiting for {currentPlayer?.name} to choose...</p>
+            </div>
+          )}
+          
+          {usedCategories.length > 0 && (
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
+              <div className="flex flex-wrap gap-2">
+                {usedCategories.map(categoryKey => {
+                  const category = questionCategories[categoryKey];
+                  return (
+                    <span
+                      key={categoryKey}
+                      className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full"
+                    >
+                      {category.name}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Playing Screen
+  if (gameState === 'playing') {
+    const currentCategoryData = questionCategories[currentCategory];
+    const IconComponent = currentCategoryData?.icon || MessageCircle;
+    const currentPlayer = players[currentTurnIndex] || players[0];
+    const isMyTurn = currentPlayer?.name === playerName;
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4">
+              <IconComponent className="w-6 h-6 text-white" />
+            </div>
+            
+            {currentCategoryData && (
+              <div className="mb-4">
+                <span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}>
+                  <IconComponent className="w-3 h-3" />
+                  <span>{currentCategoryData.name}</span>
+                </span>
+              </div>
+            )}
+            
+            <h2 className="text-lg font-semibold text-gray-800 mb-2">{currentPlayer?.name}'s Question</h2>
+            <p className="text-sm text-gray-500 mb-4">Round {Math.floor(turnHistory.length / players.length) + 1} • Turn {(turnHistory.length % players.length) + 1} of {players.length}</p>
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-2xl border-l-4 border-purple-500">
+              <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            {isMyTurn ? (
+              <button
+                onClick={handleNextQuestion}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+              >
+                Pass to {players[(currentTurnIndex + 1) % players.length]?.name}
+              </button>
+            ) : (
+              <div className="text-center">
+                <p className="text-gray-600">Waiting for {currentPlayer?.name} to finish their turn...</p>
+              </div>
+            )}
+            
+            <button
+              onClick={() => setGameState('waitingRoom')}
+              className="w-full bg-white border-2 border-gray-300 text-gray-600 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 transition-all"
+            >
+              Back to Lobby
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Waiting for Others Screen (After Relationship Survey)
+  if (gameState === 'waitingForOthers') {
+    const playersWithRelationships = players.filter(p => p.relationshipAnswers);
+    const waitingFor = players.filter(p => !p.relationshipAnswers).map(p => p.name);
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">Thanks!</h2>
+            <p className="text-gray-600">Waiting for others to complete their surveys...</p>
+          </div>
+          
+          <div className="mb-4">
+            <p className="text-lg text-gray-700">{playersWithRelationships.length} of {players.length} completed</p>
+          </div>
+          
+          {waitingFor.length > 0 && (
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+              <p className="text-gray-600 mb-2">Still waiting for:</p>
+              <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
