@@ -1848,6 +1848,7 @@ export default function Overshare() {
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4 transform transition-all duration-300 hover:scale-110">
               <IconComponent className="w-6 h-6 text-white" />
             // ====================================================================
+// ====================================================================
   // SCREEN COMPONENTS - Waiting for Host Screen (FIXED Dark Mode)
   // ====================================================================
   if (gameState === 'waitingForHost') {
@@ -1861,9 +1862,13 @@ export default function Overshare() {
     const topCategories = calculateTopCategories(categoryVotes);
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
+        <FloatingButtons />
+        <DonateButton />
+        <HelpModal />
+        <DonateModal />
+        <NotificationToast />
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-2">All Votes Are In!</h2>
             <p className="text-gray-600">Top categories based on everyone's votes:</p>
@@ -1881,7 +1886,7 @@ export default function Overshare() {
                   return (
                     <div
                       key={categoryKey}
-                      className={`flex items-center justify-between p-3 rounded-xl ${
+                      className={`flex items-center justify-between p-3 rounded-xl transition-all duration-200 ${
                         isSelected ? 'bg-purple-50 border-2 border-purple-300' : 'bg-gray-50'
                       }`}
                     >
@@ -1889,7 +1894,7 @@ export default function Overshare() {
                         <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
                           <IconComponent className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-medium text-gray-800">{category.name}</span>
+                        <span className="font-medium text-gray-900">{category.name}</span>
                       </div>
                       <span className="text-sm text-gray-600">{voteCount} votes</span>
                     </div>
@@ -1912,7 +1917,7 @@ export default function Overshare() {
                 });
                 setGameState('relationshipSurvey');
               }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all duration-200 transform hover:scale-105"
             >
               Let's See How You Know Each Other
             </button>
@@ -1923,7 +1928,6 @@ export default function Overshare() {
       </div>
     );
   }
-
   // ====================================================================
   // SCREEN COMPONENTS - Relationship Survey Screen
   // ====================================================================
