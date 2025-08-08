@@ -502,7 +502,7 @@ export default function Overshare() {
   try {
   await updateDoc(doc(db, 'sessions', sessionCode), {
     // ... your existing updates
-  });
+  };
   
   setCurrentQuestion(question);
   setGameState('playing'); // Make sure this runs AFTER Firebase update
