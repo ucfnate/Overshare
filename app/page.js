@@ -1848,6 +1848,7 @@ export default function Overshare() {
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4 transform transition-all duration-300 hover:scale-110">
               <IconComponent className="w-6 h-6 text-white" />
             // ====================================================================
+      }
 // ====================================================================
   // SCREEN COMPONENTS - Waiting for Host Screen (FIXED Dark Mode)
   // ====================================================================
