@@ -1095,8 +1095,46 @@ export default function Overshare() {
                   const sessionData = sessionSnap.data();
                   const updatedPlayers = [...sessionData.players, newPlayer];
                   
-                  await updateDoc(sessionRef, {
-                // ====================================================================
+                 await updateDoc(sessionRef, {
+                    players: updatedPlayers
+                  });
+                  
+                  setPlayers(updatedPlayers);
+                  playSound('success');
+                }
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all duration-200 mb-4 transform hover:scale-105"
+            >
+              Join Game
+            </button>
+          )}
+          
+          {isHost && !isNewPlayer && (
+            <button
+              onClick={async () => {
+                playSound('click');
+                // Move everyone to category voting after all players joined
+                await updateDoc(doc(db, 'sessions', sessionCode), {
+                  gameState: 'categoryVoting'
+                });
+                setGameState('categoryVoting');
+              }}
+              disabled={players.length < 2}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
+            >
+              Start Game
+            </button>
+          )}
+          
+          {!isHost && !isNewPlayer && (
+            <p className="text-gray-500">Waiting for host to continue...</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ====================================================================
   // SCREEN COMPONENTS - Welcome Screen
   // ====================================================================
   if (gameState === 'welcome') {
