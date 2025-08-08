@@ -1,5 +1,6 @@
 'use client';
 
+import { QrCode, Volume2, VolumeX, SkipForward } from 'lucide-react';
 import React, { useState, useEffect } from 'react';
 import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame } from 'lucide-react';
 import { db } from '../lib/firebase';
@@ -35,6 +36,8 @@ export default function Overshare() {
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [categoryVotes, setCategoryVotes] = useState({});
   const [myVotedCategories, setMyVotedCategories] = useState([]);
+  const [isMuted, setIsMuted] = useState(false);
+  const [showQR, setShowQR] = useState(false);
 
   const initialSurveyQuestions = [
     {
@@ -159,6 +162,15 @@ export default function Overshare() {
     setCurrentCategory(category);
     return question;
   };
+    const playSound = (type) => {
+  if (isMuted) return;
+  try {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    // ... (sound implementation from the demo)
+     } catch (error) {
+    console.log('Audio not supported');
+     }
+  };
 
   // Firebase functions
   const createFirebaseSession = async (sessionCode, hostPlayer) => {
@@ -256,7 +268,7 @@ export default function Overshare() {
         
         // Handle game state transitions
         if (data.gameState === 'playing' && gameState !== 'playing') {
-          setGameState('playing');
+          ('playing');
         } else if (data.gameState === 'categoryPicking' && gameState !== 'categoryPicking') {
           setGameState('categoryPicking');
         } else if (data.gameState === 'categoryVoting' && gameState !== 'categoryVoting') {
@@ -487,6 +499,18 @@ export default function Overshare() {
       player: currentPlayer.name,
       category: category,
       question: question
+  try {
+  await updateDoc(doc(db, 'sessions', sessionCode), {
+    // ... your existing updates
+  });
+  
+  setCurrentQuestion(question);
+  setGameState('playing'); // Make sure this runs AFTER Firebase update
+} catch (error) {
+  console.error('Error in handleCategoryPicked:', error);
+  // Still try to set state locally
+  setGameState('playing'); 
+}
     }];
     
     await updateDoc(doc(db, 'sessions', sessionCode), {
@@ -501,6 +525,7 @@ export default function Overshare() {
     
     setCurrentQuestion(question);
     setGameState('playing');
+    
   };
 
   const handleNextQuestion = async () => {
@@ -529,6 +554,14 @@ export default function Overshare() {
     setUsedCategories(newUsedCategories);
     setGameState('categoryPicking');
   };
+      // Add this function after handleNextQuestion and before the game screens
+  const handleSkipQuestion = async () => {
+    const newQuestion = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, currentCategory, currentQuestion);
+    setCurrentQuestion(newQuestion);
+    if (sessionCode) {
+      await updateDoc(doc(db, 'sessions', sessionCode), { currentQuestion: newQuestion });
+    }
+};
 
   // Welcome Screen
   if (gameState === 'welcome') {
