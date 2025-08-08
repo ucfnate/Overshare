@@ -499,10 +499,15 @@ export default function Overshare() {
       player: currentPlayer.name,
       category: category,
       question: question,
-  try {
+ try {
   await updateDoc(doc(db, 'sessions', sessionCode), {
     // ... your existing updates
-  };
+  });
+} catch (error) {
+  console.error("Error updating document:", error);
+  // Handle the error appropriately, perhaps display an error message to the user
+}
+
   
   setCurrentQuestion(question);
   setGameState('playing'); // Make sure this runs AFTER Firebase update
