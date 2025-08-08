@@ -11,8 +11,6 @@ import {
   onSnapshot, 
   serverTimestamp 
 } from 'firebase/firestore';
-
-// Import the external question categories library
 import { questionCategories, getRandomQuestion, getCategoryKeys, getCategoryInfo } from '../lib/questionCategories';
 
 export default function Overshare() {
@@ -57,22 +55,11 @@ export default function Overshare() {
   // ====================================================================
   // STATE MANAGEMENT - Audio & UI
   // ====================================================================
-  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
-  const [showHelpModal, setShowHelpModal] = useState(false);
-  const [showDonateModal, setShowDonateModal] = useState(false);
-  
-  // ====================================================================
-  // STATE MANAGEMENT - Skip System
-  // ====================================================================
   const [skipsUsedThisTurn, setSkipsUsedThisTurn] = useState(0);
   const [maxSkipsPerTurn] = useState(1);
-  
-  // ====================================================================
-  // STATE MANAGEMENT - Notifications
-  // ====================================================================
   const [notification, setNotification] = useState(null);
-  
+
   // ====================================================================
   // CONFIGURATION - Survey Questions
   // ====================================================================
@@ -113,12 +100,11 @@ export default function Overshare() {
   ];
 
   // ====================================================================
-  // AUDIO SYSTEM - Sound Effects and Music
+  // AUDIO SYSTEM - Sound Effects
   // ====================================================================
   const playSound = (type) => {
     if (!audioEnabled) return;
     
-    // Create audio context for sound effects
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     
     const sounds = {
@@ -167,6 +153,14 @@ export default function Overshare() {
   };
 
   // ====================================================================
+  // NOTIFICATION SYSTEM
+  // ====================================================================
+  const showNotification = (message, emoji = "🎉") => {
+    setNotification({ message, emoji });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  // ====================================================================
   // ALGORITHM - Smart Category Recommendation System
   // ====================================================================
   const recommendCategories = (players, relationships) => {
@@ -176,27 +170,22 @@ export default function Overshare() {
 
     let recommended = [];
 
-    // Always include icebreakers for groups > 3 or low intimacy
     if (groupSize > 3 || intimacyScore < 3) {
       recommended.push('icebreakers');
     }
 
-    // Add creative for mixed groups
     if (groupSize > 2) {
       recommended.push('creative');
     }
 
-    // Add deep dive for close relationships and high comfort
     if (intimacyScore >= 3 && comfortLevel >= 3) {
       recommended.push('deep_dive');
     }
 
-    // Add growth for couples or very close friends
     if (intimacyScore >= 4 || (groupSize === 2 && intimacyScore >= 3)) {
       recommended.push('growth');
     }
 
-    // Only suggest spicy for very comfortable groups
     if (intimacyScore >= 4 && comfortLevel >= 4 && groupSize <= 4) {
       recommended.push('spicy');
     }
@@ -246,12 +235,10 @@ export default function Overshare() {
     let category = forceCategory;
     
     if (!category) {
-      // If no categories selected, pick one intelligently
       if (selectedCategories.length === 0) {
         const recommended = recommendCategories(players, relationships);
         category = recommended[Math.floor(Math.random() * recommended.length)] || 'icebreakers';
       } else {
-        // Pick from selected categories
         category = selectedCategories[Math.floor(Math.random() * selectedCategories.length)];
       }
     }
@@ -267,22 +254,20 @@ export default function Overshare() {
   const calculateTopCategories = (votes) => {
     const voteCount = {};
     
-    // Count votes for each category
     Object.values(votes).forEach(playerVotes => {
       playerVotes.forEach(category => {
         voteCount[category] = (voteCount[category] || 0) + 1;
       });
     });
     
-    // Sort categories by vote count
     const sortedCategories = Object.entries(voteCount)
       .sort((a, b) => b[1] - a[1])
       .map(([category]) => category);
     
-    // Return top 3-4 categories, or all if less than 3
     return sortedCategories.slice(0, Math.min(4, Math.max(3, sortedCategories.length)));
   };
-// ====================================================================
+
+  // ====================================================================
   // FIREBASE - Session Management Functions
   // ====================================================================
   const createFirebaseSession = async (sessionCode, hostPlayer) => {
@@ -295,7 +280,6 @@ export default function Overshare() {
         currentQuestionAsker: '',
         gameState: 'waiting',
         selectedCategories: [],
-        // Turn system data
         currentTurnIndex: 0,
         availableCategories: [],
         usedCategories: [],
@@ -357,52 +341,42 @@ export default function Overshare() {
   };
 
   // ====================================================================
-  // FIREBASE - Real-time Session Listener (ENHANCED with Join Notifications)
+  // FIREBASE - Real-time Session Listener
   // ====================================================================
   const listenToSession = (sessionCode) => {
-    console.log('🚀 Setting up listener for session:', sessionCode);
-    
     const sessionRef = doc(db, 'sessions', sessionCode);
     let previousPlayerCount = 0;
     
     const unsubscribe = onSnapshot(sessionRef, (doc) => {
-      console.log('🔥 Listener triggered! Doc exists:', doc.exists());
-      
       if (doc.exists()) {
         const data = doc.data();
-        console.log('📊 Session data:', data);
         
-        // Check for new players joining (show notification)
         if (data.players && previousPlayerCount > 0 && data.players.length > previousPlayerCount) {
           const newPlayer = data.players[data.players.length - 1];
-          if (newPlayer.name !== playerName) { // Don't show notification for yourself
+          if (newPlayer.name !== playerName) {
             showNotification(`${newPlayer.name} joined the game!`, "👋");
             playSound('success');
           }
         }
         previousPlayerCount = data.players?.length || 0;
         
-        // Update existing state
         setPlayers([...data.players || []]);
         setCurrentQuestion(data.currentQuestion || '');
         setCurrentCategory(data.currentCategory || '');
         setCurrentQuestionAsker(data.currentQuestionAsker || '');
         setSelectedCategories([...data.selectedCategories || []]);
         
-        // Update new turn-related state
         setCurrentTurnIndex(data.currentTurnIndex || 0);
         setAvailableCategories([...data.availableCategories || []]);
         setUsedCategories([...data.usedCategories || []]);
         setTurnHistory([...data.turnHistory || []]);
         setCategoryVotes(data.categoryVotes || {});
         
-        // Reset skip counter when turn changes
         const currentTurn = data.currentTurnIndex || 0;
         if (currentTurn !== currentTurnIndex) {
           setSkipsUsedThisTurn(0);
         }
         
-        // Handle game state transitions with audio feedback
         if (data.gameState === 'playing' && gameState !== 'playing') {
           setGameState('playing');
           playSound('success');
@@ -416,16 +390,12 @@ export default function Overshare() {
         } else if (data.gameState === 'waitingForHost' && gameState !== 'waitingForHost') {
           setGameState('waitingForHost');
         }
-      } else {
-        console.log('❌ Session document does not exist');
       }
     }, (error) => {
-      console.error('❌ Firebase listener error:', error);
+      console.error('Firebase listener error:', error);
     });
     
-    // Store the unsubscribe function directly (not in state)
     window.currentSessionListener = unsubscribe;
-    
     return unsubscribe;
   };
 
@@ -435,14 +405,15 @@ export default function Overshare() {
   useEffect(() => {
     return () => {
       if (window.currentSessionListener) {
-        console.log('🧹 Cleaning up listener');
         window.currentSessionListener();
         window.currentSessionListener = null;
       }
     };
   }, []);
 
-  // ====================================================================
+  // Continue to Part 2...
+}
+// ====================================================================
   // EVENT HANDLERS - Survey and Initial Setup
   // ====================================================================
   const handleSurveySubmit = () => {
@@ -471,9 +442,7 @@ export default function Overshare() {
       setGameState('waitingRoom');
       playSound('success');
       
-      // Add delay before listener
       setTimeout(() => {
-        console.log('Starting listener after delay');
         listenToSession(code);
       }, 1000);
     } else {
@@ -483,7 +452,6 @@ export default function Overshare() {
 
   const handleJoinSession = async () => {
     if (sessionCode.trim()) {
-      // Don't add player yet - just check if session exists
       const sessionRef = doc(db, 'sessions', sessionCode.trim().toUpperCase());
       const sessionSnap = await getDoc(sessionRef);
       
@@ -493,10 +461,8 @@ export default function Overshare() {
         setSelectedCategories(sessionData.selectedCategories || []);
         setSessionCode(sessionCode.trim().toUpperCase());
         
-        // Start listening to session updates
         listenToSession(sessionCode.trim().toUpperCase());
         
-        // Go to waiting room first, not relationship survey
         setGameState('waitingRoom');
         playSound('success');
       } else {
@@ -509,8 +475,6 @@ export default function Overshare() {
   // EVENT HANDLERS - Relationship Survey System
   // ====================================================================
   const handleRelationshipSurveySubmit = async () => {
-    // Don't create a new player - they already exist
-    // Just update with relationship data
     try {
       const sessionRef = doc(db, 'sessions', sessionCode);
       const sessionSnap = await getDoc(sessionRef);
@@ -527,15 +491,11 @@ export default function Overshare() {
           players: updatedPlayers
         });
         
-        // Check if all players have completed relationship survey
         const allCompleted = updatedPlayers.every(p => p.relationshipAnswers);
         
         if (allCompleted) {
-          // Get the selected categories and start the game
-          const sessionData = sessionSnap.data();
           const topCategories = sessionData.selectedCategories || [];
           
-          // Move to category picking for first player
           await updateDoc(sessionRef, {
             gameState: 'categoryPicking',
             currentTurnIndex: 0,
@@ -546,7 +506,6 @@ export default function Overshare() {
           setGameState('categoryPicking');
           playSound('success');
         } else {
-          // Wait for others
           setGameState('waitingForOthers');
         }
       }
@@ -556,7 +515,7 @@ export default function Overshare() {
   };
 
   // ====================================================================
-  // EVENT HANDLERS - Category Voting System (FIXED)
+  // EVENT HANDLERS - Category Voting System
   // ====================================================================
   const handleCategoryVote = async (selectedCats) => {
     try {
@@ -567,7 +526,6 @@ export default function Overshare() {
         const sessionData = sessionSnap.data();
         const currentVotes = sessionData.categoryVotes || {};
         
-        // Update votes for this player
         currentVotes[playerName] = selectedCats;
         
         await updateDoc(sessionRef, {
@@ -575,34 +533,31 @@ export default function Overshare() {
         });
         
         setMyVotedCategories(selectedCats);
-        setHasVotedCategories(true); // FIXED: Set local vote status
+        setHasVotedCategories(true);
         playSound('success');
         
-        // Only check if all players have voted when there are multiple players
         if (sessionData.players.length > 1) {
           const allPlayersVoted = sessionData.players.every(player => 
             currentVotes[player.name] && currentVotes[player.name].length > 0
           );
           
           if (allPlayersVoted) {
-            // Move to waiting room automatically
             await updateDoc(sessionRef, {
               gameState: 'waitingForHost'
             });
             setGameState('waitingForHost');
           }
         }
-        // If only one player (host), just stay in voting screen to show their votes
       }
     } catch (error) {
       console.error('Error submitting category votes:', error);
     }
   };
+
   // ====================================================================
   // EVENT HANDLERS - Game Flow Control
   // ====================================================================
   const handleStartGame = async () => {
-    // Get the selected categories from Firebase (they were already calculated during voting)
     const sessionRef = doc(db, 'sessions', sessionCode);
     const sessionSnap = await getDoc(sessionRef);
     
@@ -610,7 +565,6 @@ export default function Overshare() {
       const sessionData = sessionSnap.data();
       const topCategories = sessionData.selectedCategories || calculateTopCategories(categoryVotes);
       
-      // Initialize turn-based system with voted categories
       await updateDoc(sessionRef, {
         gameState: 'categoryPicking',
         currentTurnIndex: 0,
@@ -628,14 +582,13 @@ export default function Overshare() {
   };
 
   // ====================================================================
-  // EVENT HANDLERS - Category Picking System (FIXED)
+  // EVENT HANDLERS - Category Picking System
   // ====================================================================
   const handleCategoryPicked = async (category) => {
     try {
       const currentPlayer = players[currentTurnIndex];
       const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, category);
       
-      // Update Firebase with the selected category and question
       const newUsedCategories = [...usedCategories, category];
       const newAvailableCategories = availableCategories.filter(c => c !== category);
       const newTurnHistory = [...turnHistory, {
@@ -644,19 +597,16 @@ export default function Overshare() {
         question: question
       }];
       
-      console.log('🎯 FIXING: Updating Firebase with question and state change');
-      
       await updateDoc(doc(db, 'sessions', sessionCode), {
         currentQuestion: question,
         currentCategory: category,
-        gameState: 'playing', // FIXED: Ensure state changes to playing
+        gameState: 'playing',
         usedCategories: newUsedCategories,
         availableCategories: newAvailableCategories,
         turnHistory: newTurnHistory,
         currentQuestionAsker: currentPlayer.name
       });
       
-      // FIXED: Also update local state immediately for responsiveness
       setCurrentQuestion(question);
       setCurrentCategory(category);
       setCurrentQuestionAsker(currentPlayer.name);
@@ -666,34 +616,26 @@ export default function Overshare() {
       setGameState('playing');
       
       playSound('success');
-      console.log('✅ FIXED: Category picked, moving to playing state');
       
     } catch (error) {
-      console.error('❌ Error in handleCategoryPicked:', error);
+      console.error('Error in handleCategoryPicked:', error);
     }
   };
 
   // ====================================================================
-  // EVENT HANDLERS - Skip Question System (ENHANCED with Limit)
+  // EVENT HANDLERS - Skip Question System
   // ====================================================================
   const handleSkipQuestion = async () => {
-    // Check if player has reached skip limit
     if (skipsUsedThisTurn >= maxSkipsPerTurn) {
       showNotification("You've used your skip for this turn!", "⏭️");
       return;
     }
     
     try {
-      const currentPlayer = players[currentTurnIndex];
-      
-      // Generate a new question from the same category
       const newQuestion = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, currentCategory);
-      
-      console.log('⏭️ Skipping question, generating new one');
       
       await updateDoc(doc(db, 'sessions', sessionCode), {
         currentQuestion: newQuestion,
-        // Keep same category and state
       });
       
       setCurrentQuestion(newQuestion);
@@ -701,23 +643,20 @@ export default function Overshare() {
       playSound('click');
       
     } catch (error) {
-      console.error('❌ Error skipping question:', error);
+      console.error('Error skipping question:', error);
     }
   };
 
   // ====================================================================
-  // EVENT HANDLERS - Turn Management System (ENHANCED with Skip Reset)
+  // EVENT HANDLERS - Turn Management System
   // ====================================================================
   const handleNextQuestion = async () => {
     try {
-      // Move to next player's turn
       const nextTurnIndex = (currentTurnIndex + 1) % players.length;
       
-      // Check if we need to reset categories (when all have been used)
       let newAvailableCategories = availableCategories;
       let newUsedCategories = usedCategories;
       
-      // If no categories are available, reset them
       if (availableCategories.length === 0) {
         newAvailableCategories = selectedCategories;
         newUsedCategories = [];
@@ -728,7 +667,7 @@ export default function Overshare() {
         currentTurnIndex: nextTurnIndex,
         availableCategories: newAvailableCategories,
         usedCategories: newUsedCategories,
-        currentQuestion: '', // Clear current question
+        currentQuestion: '',
         currentCategory: '',
         currentQuestionAsker: ''
       });
@@ -741,18 +680,32 @@ export default function Overshare() {
       setCurrentQuestionAsker('');
       setGameState('categoryPicking');
       
-      // Reset skip counter for new turn
       setSkipsUsedThisTurn(0);
       
       playSound('turnTransition');
       
     } catch (error) {
-      console.error('❌ Error in handleNextQuestion:', error);
+      console.error('Error in handleNextQuestion:', error);
     }
   };
 
   // ====================================================================
-  // UI COMPONENTS - Audio Control
+  // UI COMPONENTS - Notification Toast
+  // ====================================================================
+  const NotificationToast = () => {
+    if (!notification) return null;
+    
+    return (
+      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-50 animate-bounce">
+        <div className="flex items-center space-x-2">
+          <span className="text-2xl">{notification.emoji}</span>
+          <span className="font-medium text-gray-800">{notification.message}</span>
+        </div>
+      </div>
+    );
+  };
+
+  // Continue to Part 3... COMPONENTS - Audio Control
   // ====================================================================
   const AudioControl = () => (
     <button
@@ -851,16 +804,16 @@ export default function Overshare() {
       <div className={`${size} border-4 border-purple-500 border-t-transparent rounded-full animate-spin`}></div>
     </div>
   );
+
+  // ====================================================================
+  // UI
 // ====================================================================
   // SCREEN COMPONENTS - Welcome Screen
   // ====================================================================
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300 hover:scale-105">
           <div className="mb-6">
@@ -908,10 +861,7 @@ export default function Overshare() {
     if (currentQuestionIndex >= initialSurveyQuestions.length) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-          <FloatingButtons />
-          <DonateButton />
-          <HelpModal />
-          <DonateModal />
+          <AudioControl />
           <NotificationToast />
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300 hover:scale-105">
             <div className="mb-6">
@@ -936,10 +886,7 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
           <div className="mb-6">
@@ -982,10 +929,7 @@ export default function Overshare() {
   if (gameState === 'createOrJoin') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
           <h2 className="text-2xl font-bold text-gray-800 mb-6">Ready to play, {playerName}!</h2>
@@ -1041,10 +985,7 @@ export default function Overshare() {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
           <div className="mb-6">
@@ -1079,270 +1020,6 @@ export default function Overshare() {
             <button
               onClick={async () => {
                 playSound('click');
-                // Add player to session
-                const newPlayer = {
-                  id: Date.now().toString(),
-                  name: playerName,
-                  isHost: false,
-                  surveyAnswers,
-                  joinedAt: new Date().toISOString()
-                };
-                
-                const sessionRef = doc(db, 'sessions', sessionCode);
-                const sessionSnap = await getDoc(sessionRef);
-                
-                if (sessionSnap.exists()) {
-                  const sessionData = sessionSnap.data();
-                  const updatedPlayers = [...sessionData.players, newPlayer];
-                  
-                 await updateDoc(sessionRef, {
-                    players: updatedPlayers
-                  });
-                  
-                  setPlayers(updatedPlayers);
-                  playSound('success');
-                }
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all duration-200 mb-4 transform hover:scale-105"
-            >
-              Join Game
-            </button>
-          )}
-          
-          {isHost && !isNewPlayer && (
-            <button
-              onClick={async () => {
-                playSound('click');
-                // Move everyone to category voting after all players joined
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  gameState: 'categoryVoting'
-                });
-                setGameState('categoryVoting');
-              }}
-              disabled={players.length < 2}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
-            >
-              Start Game
-            </button>
-          )}
-          
-          {!isHost && !isNewPlayer && (
-            <p className="text-gray-500">Waiting for host to continue...</p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Welcome Screen
-  // ====================================================================
-  if (gameState === 'welcome') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
-              <MessageCircle className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Overshare</h1>
-            <p className="text-gray-600">Personalized conversation games that bring people closer together</p>
-          </div>
-          
-          <div className="mb-6">
-            <input
-              type="text"
-              placeholder="Enter your name"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white text-gray-900"
-            />
-          </div>
-          
-          <button
-            onClick={() => {
-              if (playerName.trim()) {
-                playSound('click');
-                setGameState('survey');
-              }
-            }}
-            disabled={!playerName.trim()}
-            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Let's Get Started
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Survey Screen
-  // ====================================================================
-  if (gameState === 'survey') {
-    const currentQuestionIndex = Object.keys(surveyAnswers).length;
-    const currentSurveyQuestion = initialSurveyQuestions[currentQuestionIndex];
-    
-    if (currentQuestionIndex >= initialSurveyQuestions.length) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <AudioControl />
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-            <div className="mb-6">
-              <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Perfect, {playerName}!</h2>
-              <p className="text-gray-600">We'll use this to create personalized questions for your group.</p>
-            </div>
-            
-            <button
-              onClick={() => {
-                playSound('success');
-                handleSurveySubmit();
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}</span>
-              <ProgressIndicator 
-                current={currentQuestionIndex + 1} 
-                total={initialSurveyQuestions.length}
-                className="w-16"
-              />
-            </div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-6">{currentSurveyQuestion.question}</h2>
-          </div>
-          
-          <div className="space-y-3">
-            {currentSurveyQuestion.options.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => {
-                  playSound('click');
-                  setSurveyAnswers({
-                    ...surveyAnswers,
-                    [currentSurveyQuestion.id]: option
-                  });
-                }}
-                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Create or Join Screen
-  // ====================================================================
-  if (gameState === 'createOrJoin') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">Ready to play, {playerName}!</h2>
-          
-          <div className="space-y-4">
-            <button
-              onClick={() => {
-                playSound('click');
-                handleCreateSession();
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
-            >
-              <Users className="w-5 h-5 mr-2" />
-              Create New Game
-            </button>
-            
-            <div className="flex items-center my-4">
-              <div className="flex-1 h-px bg-gray-300"></div>
-              <span className="px-4 text-gray-500 text-sm">or</span>
-              <div className="flex-1 h-px bg-gray-300"></div>
-            </div>
-            
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="Enter session code"
-                value={sessionCode}
-                onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white text-gray-900"
-              />
-              <button
-                onClick={() => {
-                  playSound('click');
-                  handleJoinSession();
-                }}
-                disabled={!sessionCode.trim()}
-                className="w-full bg-white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Join Game
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Waiting Room Screen
-  // ====================================================================
-  if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find(p => p.name === playerName);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Session {sessionCode}</h2>
-            <p className="text-gray-600">Share this code with others to join</p>
-          </div>
-          
-          <PlayerList players={players} title="Players" />
-
-          {selectedCategories.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
-              <div className="flex flex-wrap gap-2">
-                {selectedCategories.map(categoryKey => {
-                  const category = questionCategories[categoryKey];
-                  const IconComponent = category.icon;
-                  return (
-                    <div
-                      key={categoryKey}
-                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category.color} text-white text-sm`}
-                    >
-                      <IconComponent className="w-4 h-4" />
-                      <span>{category.name}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          
-          {isNewPlayer && (
-            <button
-              onClick={async () => {
-                playSound('click');
-                // Add player to session
                 const newPlayer = {
                   id: Date.now().toString(),
                   name: playerName,
@@ -1376,7 +1053,6 @@ export default function Overshare() {
             <button
               onClick={async () => {
                 playSound('click');
-                // Move everyone to category voting after all players joined
                 await updateDoc(doc(db, 'sessions', sessionCode), {
                   gameState: 'categoryVoting'
                 });
@@ -1398,7 +1074,7 @@ export default function Overshare() {
   }
 
   // ====================================================================
-  // SCREEN COMPONENTS - Category Voting Screen (ENHANCED)
+  // SCREEN COMPONENTS - Category Voting Screen
   // ====================================================================
   if (gameState === 'categoryVoting') {
     const recommended = recommendCategories(players, relationshipAnswers);
@@ -1409,10 +1085,7 @@ export default function Overshare() {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
           <div className="mb-6 text-center">
@@ -1431,7 +1104,6 @@ export default function Overshare() {
             )}
           </div>
           
-          {/* FIXED: Only show voting interface if player hasn't voted */}
           {!hasVotedCategories ? (
             <>
               <div className="space-y-3 mb-6">
@@ -1470,7 +1142,6 @@ export default function Overshare() {
               </button>
             </>
           ) : (
-            /* FIXED: Show voted categories and waiting status */
             <div>
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-3">Your Votes:</h3>
@@ -1540,8 +1211,9 @@ export default function Overshare() {
       </div>
     );
   }
-// ====================================================================
-  // SCREEN COMPONENTS - Waiting for Host Screen (FIXED Dark Mode)
+
+  // ====================================================================
+  // SCREEN COMPONENTS - Waiting for Host Screen
   // ====================================================================
   if (gameState === 'waitingForHost') {
     const voteResults = {};
@@ -1555,325 +1227,7 @@ export default function Overshare() {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
-        <NotificationToast />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">All Votes Are In!</h2>
-            <p className="text-gray-600">Top categories based on everyone's votes:</p>
-          </div>
-          
-          <div className="mb-6">
-            <div className="space-y-2">
-              {Object.entries(voteResults)
-                .sort((a, b) => b[1] - a[1])
-                .map(([categoryKey, voteCount]) => {
-                  const category = questionCategories[categoryKey];
-                  const IconComponent = category.icon;
-                  const isSelected = topCategories.includes(categoryKey);
-                  
-                  return (
-                    <div
-                      key={categoryKey}
-                      className={`flex items-center justify-between p-3 rounded-xl transition-all duration-200 ${
-                        isSelected ? 'bg-purple-50 border-2 border-purple-300' : 'bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
-                          <IconComponent className="w-4 h-4 text-white" />
-                        </div>
-                        <span className="font-medium text-gray-900">{category.name}</span>
-                      </div>
-                      <span className="text-sm text-gray-600">{voteCount} votes</span>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-          
-          {isHost ? (
-            <button
-              onClick={async () => {
-                playSound('click');
-                // Calculate and save the top categories before moving to relationship survey
-                const topCategories = calculateTopCategories(categoryVotes);
-                
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  gameState: 'relationshipSurvey',
-                  selectedCategories: topCategories,
-                  availableCategories: topCategories
-                });
-                setGameState('relationshipSurvey');
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all duration-200 transform hover:scale-105"
-            >
-              Let's See How You Know Each Other
-            </button>
-          ) : (
-            <p className="text-gray-500">Waiting for {players.find(p => p.isHost)?.name} to continue...</p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Relationship Survey Screen
-  // ====================================================================
-  if (gameState === 'relationshipSurvey') {
-    const currentPlayerIndex = Object.keys(relationshipAnswers).length;
-    // Filter out yourself from the players list
-    const otherPlayers = players.filter(p => p.name !== playerName);
-    const currentPlayer = otherPlayers[currentPlayerIndex];
-    
-    if (currentPlayerIndex >= otherPlayers.length) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-          <FloatingButtons />
-          <DonateButton />
-          <HelpModal />
-          <DonateModal />
-          <NotificationToast />
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
-            <div className="mb-6">
-              <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">Great!</h2>
-              <p className="text-gray-600">Now let's choose what types of questions you want to explore.</p>
-            </div>
-            
-            <button
-              onClick={() => {
-                playSound('success');
-                handleRelationshipSurveySubmit();
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all duration-200 transform hover:scale-105"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
-        <NotificationToast />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {otherPlayers.length}</span>
-              <ProgressIndicator 
-                current={currentPlayerIndex + 1} 
-                total={otherPlayers.length}
-                className="w-16"
-              />
-            </div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">How are you connected to {currentPlayer?.name}?</h2>
-            <p className="text-gray-600 text-sm">This helps us create better questions for your group.</p>
-          </div>
-          
-          <div className="space-y-3">
-            {relationshipOptions.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => {
-                  playSound('click');
-                  setRelationshipAnswers({
-                    ...relationshipAnswers,
-                    [currentPlayer.name]: option
-                  });
-                }}
-                className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all duration-200 transform hover:scale-102"
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Waiting for Others Screen (After Relationship Survey)
-  // ====================================================================
-  if (gameState === 'waitingForOthers') {
-    const playersWithRelationships = players.filter(p => p.relationshipAnswers);
-    const waitingFor = players.filter(p => !p.relationshipAnswers).map(p => p.name);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
-        <NotificationToast />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
-          <div className="mb-6">
-            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Thanks!</h2>
-            <p className="text-gray-600">Waiting for others to complete their surveys...</p>
-          </div>
-          
-          <div className="mb-4">
-            <p className="text-lg text-gray-700">{playersWithRelationships.length} of {players.length} completed</p>
-          </div>
-          
-          {waitingFor.length > 0 && (
-            <div className="text-center">
-              <LoadingSpinner size="w-16 h-16" />
-              <p className="text-gray-600 mb-2 mt-4">Still waiting for:</p>
-              <p className="text-sm text-gray-500">{waitingFor.join(', ')}</p>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Category Picking Screen (Turn-based) (ENHANCED)
-  // ====================================================================
-  if (gameState === 'categoryPicking') {
-    const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.name === playerName;
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
-        <NotificationToast />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
-          <div className="mb-6 text-center">
-            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            {isMyTurn ? (
-              <>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">Your Turn!</h2>
-                <p className="text-gray-600">Choose a category for the next question</p>
-              </>
-            ) : (
-              <>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">{currentPlayer?.name}'s Turn</h2>
-                <p className="text-gray-600">{currentPlayer?.name} is choosing a category...</p>
-              </>
-            )}
-            <p className="text-sm text-gray-500 mt-2">Round {Math.floor(turnHistory.length / players.length) + 1}</p>
-          </div>
-          
-          {isMyTurn ? (
-            <div className="space-y-3">
-              {availableCategories.length > 0 ? (
-                availableCategories.map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
-                  
-                  return (
-                    <CategoryCard
-                      key={categoryKey}
-                      categoryKey={categoryKey}
-                      category={category}
-                      isSelected={false}
-                      isRecommended={false}
-                      onClick={() => {
-                        playSound('click');
-                        handleCategoryPicked(categoryKey);
-                      }}
-                    />
-                  );
-                })
-              ) : (
-                <div className="text-center p-4 bg-gray-50 rounded-xl">
-                  <p className="text-gray-600">All categories have been used! Categories will reset for the next round.</p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-center">
-              <LoadingSpinner size="w-16 h-16" />
-              <p className="text-gray-500 mt-4">Waiting for {currentPlayer?.name} to choose...</p>
-            </div>
-          )}
-          
-          {usedCategories.length > 0 && (
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
-              <div className="flex flex-wrap gap-2">
-                {usedCategories.map(categoryKey => {
-                  const category = questionCategories[categoryKey];
-                  return (
-                    <span
-                      key={categoryKey}
-                      className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full transition-all duration-200"
-                    >
-                      {category.name}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ====================================================================
-  // SCREEN COMPONENTS - Playing Screen (ENHANCED with Skip Feature & Animations)
-  // ====================================================================
-  if (gameState === 'playing') {
-    const currentCategoryData = questionCategories[currentCategory];
-    const IconComponent = currentCategoryData?.icon || MessageCircle;
-    const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.name === playerName;
-    const canSkip = skipsUsedThisTurn < maxSkipsPerTurn;
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
-        <NotificationToast />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
-          <div className="mb-6 text-center">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4 transform transition-all duration-300 hover:scale-110">
-             <IconComponent className="w-6 h-6 text-white" />
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-            // ====================================================================
-      }
-// ====================================================================
-  // SCREEN COMPONENTS - Waiting for Host Screen (FIXED Dark Mode)
-  // ====================================================================
-  if (gameState === 'waitingForHost') {
-    const voteResults = {};
-    Object.values(categoryVotes).forEach(votes => {
-      votes.forEach(cat => {
-        voteResults[cat] = (voteResults[cat] || 0) + 1;
-      });
-    });
-    
-    const topCategories = calculateTopCategories(categoryVotes);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
           <div className="mb-6">
@@ -1946,10 +1300,7 @@ export default function Overshare() {
     if (currentPlayerIndex >= otherPlayers.length) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-          <FloatingButtons />
-          <DonateButton />
-          <HelpModal />
-          <DonateModal />
+          <AudioControl />
           <NotificationToast />
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
             <div className="mb-6">
@@ -1974,10 +1325,7 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
           <div className="mb-6">
@@ -2024,10 +1372,7 @@ export default function Overshare() {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transform transition-all duration-300">
           <div className="mb-6">
@@ -2061,10 +1406,7 @@ export default function Overshare() {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
           <div className="mb-6 text-center">
@@ -2151,10 +1493,7 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4 transition-all duration-500">
-        <FloatingButtons />
-        <DonateButton />
-        <HelpModal />
-        <DonateModal />
+        <AudioControl />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
           <div className="mb-6 text-center">
@@ -2228,3 +1567,4 @@ export default function Overshare() {
   // FALLBACK - Return null for unhandled states
   // ====================================================================
   return null;
+}
