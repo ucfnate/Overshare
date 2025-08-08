@@ -498,7 +498,7 @@ export default function Overshare() {
     const newTurnHistory = [...turnHistory, {
       player: currentPlayer.name,
       category: category,
-      question: question
+      question: question,
   try {
   await updateDoc(doc(db, 'sessions', sessionCode), {
     // ... your existing updates
