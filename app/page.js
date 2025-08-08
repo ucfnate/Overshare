@@ -1231,7 +1231,7 @@ export default function Overshare() {
         <AudioControl />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">All Votes Are In!</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">All Votes Are In!</h2>
             <p className="text-gray-600">Top categories based on everyone's votes:</p>
           </div>
           
