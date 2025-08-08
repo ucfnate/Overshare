@@ -499,13 +499,15 @@ export default function Overshare() {
       player: currentPlayer.name,
       category: category,
       question: question,
- try {
-  await updateDoc(doc(db, 'sessions', sessionCode), {
-    // ... your existing updates
-  });
+    // ... any other fields you want to update
+};
+
+try {
+    await updateDoc(doc(db, "sessions", sessionCode), updatedData);
+    // ... your existing updates (if there are more to update on the session object)
 } catch (error) {
-  console.error("Error updating document:", error);
-  // Handle the error appropriately, perhaps display an error message to the user
+    console.error("Error updating document:", error);
+    // Handle the error appropriately, perhaps display an error message to the user
 }
 
   
