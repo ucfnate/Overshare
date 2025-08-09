@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame, Volume2, VolumeX, SkipForward } from 'lucide-react';
+import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame, Volume2, VolumeX, SkipForward, HelpCircle, X } from 'lucide-react';
 import { db } from '../lib/firebase';
 import {
   doc,
@@ -38,6 +38,7 @@ export default function Overshare() {
   const [skipsUsedThisTurn, setSkipsUsedThisTurn] = useState(0);
   const [maxSkipsPerTurn] = useState(1);
   const [notification, setNotification] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   // REFS
   const unsubscribeRef = useRef(null);
@@ -72,7 +73,7 @@ export default function Overshare() {
     {
       id: 'group_energy',
       question: 'You contribute best to group conversations when:',
-      options: ['Everyone is laughing and having fun', 'There\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
+      options: ['Everyone is laughing and having fun', 'There\\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
     }
   ];
 
@@ -82,7 +83,7 @@ export default function Overshare() {
     'Friend (hang out regularly)',
     'Family member',
     'Coworker/colleague',
-    'Acquaintance (don\'t know well)',
+    'Acquaintance (don\\'t know well)',
     'Just met/new friend'
   ];
 
@@ -152,7 +153,7 @@ export default function Overshare() {
       'Friend (hang out regularly)': 3,
       'Family member': 4,
       'Coworker/colleague': 2,
-      'Acquaintance (don\'t know well)': 1,
+      'Acquaintance (don\\'t know well)': 1,
       'Just met/new friend': 1
     };
     const scores = Object.values(relationships).map((rel) => intimacyMap[rel] || 2);
@@ -265,7 +266,7 @@ export default function Overshare() {
           const newPlayer = (data.players || [])[newCount - 1];
           if (newPlayer && newPlayer.name !== playerName) {
             showNotification(`${newPlayer.name} joined the game!`, '👋');
-            playSound('success');
+            try { playSound('success'); } catch {}
           }
         }
         previousPlayerCount = newCount;
@@ -291,8 +292,8 @@ export default function Overshare() {
 
         if (data.gameState !== gameState) {
           setGameState(data.gameState);
-          if (data.gameState === 'playing') playSound('success');
-          else if (data.gameState === 'categoryPicking') playSound('turnTransition');
+          if (data.gameState === 'playing') try { playSound('success'); } catch {}
+          else if (data.gameState === 'categoryPicking') try { playSound('turnTransition'); } catch {}
         }
       },
       (error) => {
@@ -316,7 +317,7 @@ export default function Overshare() {
   // EVENT HANDLERS
   const handleSurveySubmit = () => {
     if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
-      playSound('success');
+      try { playSound('success'); } catch {}
       setGameState('createOrJoin');
     }
   };
@@ -338,7 +339,7 @@ export default function Overshare() {
     setIsHost(true);
     setPlayers([hostPlayer]);
     setGameState('waitingRoom');
-    playSound('success');
+    try { playSound('success'); } catch {}
 
     // Start listening immediately
     listenToSession(code);
@@ -384,7 +385,7 @@ export default function Overshare() {
 
     listenToSession(code);
     setGameState('waitingRoom');
-    playSound('success');
+    try { playSound('success'); } catch {}
   };
 
   const handleRelationshipSurveySubmit = async () => {
@@ -411,7 +412,7 @@ export default function Overshare() {
           turnHistory: []
         });
         setGameState('categoryPicking');
-        playSound('success');
+        try { playSound('success'); } catch {}
       } else {
         setGameState('waitingForOthers');
       }
@@ -434,7 +435,7 @@ export default function Overshare() {
 
       setMyVotedCategories(selectedCats);
       setHasVotedCategories(true);
-      playSound('success');
+      try { playSound('success'); } catch {}
 
       if ((sessionData.players || []).length > 1) {
         const allPlayersVoted = (sessionData.players || []).every(
@@ -481,7 +482,7 @@ export default function Overshare() {
       setAvailableCategories(newAvailableCategories);
       setTurnHistory(newTurnHistory);
       setGameState('playing');
-      playSound('success');
+      try { playSound('success'); } catch {}
     } catch (error) {
       console.error('Error in handleCategoryPicked:', error);
     }
@@ -502,7 +503,7 @@ export default function Overshare() {
       await updateDoc(doc(db, 'sessions', sessionCode), { currentQuestion: newQuestion });
       setCurrentQuestion(newQuestion);
       setSkipsUsedThisTurn((n) => n + 1);
-      playSound('click');
+      try { playSound('click'); } catch {}
     } catch (error) {
       console.error('Error skipping question:', error);
     }
@@ -540,24 +541,84 @@ export default function Overshare() {
       setCurrentQuestionAsker('');
       setGameState('categoryPicking');
       setSkipsUsedThisTurn(0);
-      playSound('turnTransition');
+      try { playSound('turnTransition'); } catch {}
     } catch (error) {
       console.error('Error in handleNextQuestion:', error);
     }
   };
 
   // UI COMPONENTS
-  const AudioControl = () => (
-    <button
-      onClick={() => {
-        setAudioEnabled((v) => !v);
-        playSound('click');
-      }}
-      className="fixed top-4 right-4 bg-white/20 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 transition-all z-50"
-    >
-      {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-    </button>
+  const TopBar = () => (
+    <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+      <button
+        onClick={() => {
+          setAudioEnabled((v) => !v);
+          try { playSound('click'); } catch {}
+        }}
+        className="bg-white/20 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 transition-all"
+        aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
+        title={audioEnabled ? 'Sound: on' : 'Sound: off'}
+      >
+        {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+      </button>
+      <button
+        onClick={() => setShowHelp(true)}
+        className="bg-white/20 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 transition-all"
+        aria-label="Help"
+        title="Help"
+      >
+        <HelpCircle className="w-5 h-5" />
+      </button>
+    </div>
   );
+
+  const HelpModal = () => {
+    if (!showHelp) return null;
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setShowHelp(false);
+        }}
+      >
+        <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl p-6 relative">
+          <button
+            className="absolute top-3 right-3 text-gray-500 hover:text-gray-700"
+            onClick={() => setShowHelp(false)}
+            aria-label="Close help"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-center gap-3 mb-4">
+            <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500">
+              <MessageCircle className="w-5 h-5 text-white" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-800">How to Play Overshare</h3>
+          </div>
+
+          <div className="space-y-3 text-gray-700">
+            <p>It’s a conversation game — don’t overthink it.</p>
+            <p>Take turns asking the group the question on your screen, then pass it to the next player.</p>
+            <p>Play it your way: bend rules, make new ones — just have fun.</p>
+            <p className="text-sm text-gray-500">Pro tip: the more you share, the better the stories get.</p>
+          </div>
+
+          <div className="mt-6 border-t pt-4 flex items-center justify-between">
+            <span className="text-sm text-gray-500">Enjoying the game?</span>
+            <a
+              href="https://venmo.com/ucfnate"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white text-sm font-medium hover:shadow-md"
+            >
+              💜 Donate
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const NotificationToast = () => {
     if (!notification) return null;
@@ -644,7 +705,8 @@ export default function Overshare() {
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
@@ -667,10 +729,9 @@ export default function Overshare() {
 
           <button
             onClick={() => {
-              if (playerName.trim()) {
-                playSound('click');
-                setGameState('survey');
-              }
+              if (!playerName.trim()) return;
+              setGameState('survey'); // state first
+              try { playSound('click'); } catch {}
             }}
             disabled={!playerName.trim()}
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -689,7 +750,8 @@ export default function Overshare() {
     if (currentQuestionIndex >= initialSurveyQuestions.length) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <AudioControl />
+          <TopBar />
+          <HelpModal />
           <NotificationToast />
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
             <div className="mb-6">
@@ -700,7 +762,7 @@ export default function Overshare() {
 
             <button
               onClick={() => {
-                playSound('success');
+                try { playSound('success'); } catch {}
                 handleSurveySubmit();
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
@@ -714,11 +776,12 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
-            <div className="flex justify_between items-center mb-4">
+            <div className="flex justify-between items-center mb-4">
               <span className="text-sm text-gray-500">Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}</span>
               <ProgressIndicator current={currentQuestionIndex + 1} total={initialSurveyQuestions.length} className="w-16" />
             </div>
@@ -730,7 +793,7 @@ export default function Overshare() {
               <button
                 key={index}
                 onClick={() => {
-                  playSound('click');
+                  try { playSound('click'); } catch {}
                   setSurveyAnswers({ ...surveyAnswers, [currentSurveyQuestion.id]: option });
                 }}
                 className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
@@ -747,15 +810,16 @@ export default function Overshare() {
   if (gameState === 'createOrJoin') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
-        <div className="bg-white rounded-3xl p-8 max-w-md w-full text_center shadow-2xl">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <h2 className="text-2xl font-bold text-gray-800 mb-6">Ready to play, {playerName}!</h2>
 
           <div className="space-y-4">
             <button
               onClick={() => {
-                playSound('click');
+                try { playSound('click'); } catch {}
                 handleCreateSession();
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
@@ -780,11 +844,11 @@ export default function Overshare() {
               />
               <button
                 onClick={() => {
-                  playSound('click');
+                  try { playSound('click'); } catch {}
                   handleJoinSession();
                 }}
                 disabled={!sessionCode.trim()}
-                className="w-full bg_white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-white border-2 border-purple-500 text-purple-500 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Join Game
               </button>
@@ -800,7 +864,8 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
@@ -834,7 +899,7 @@ export default function Overshare() {
           {isNewPlayer && (
             <button
               onClick={async () => {
-                playSound('click');
+                try { playSound('click'); } catch {}
                 const newPlayer = {
                   id: Date.now().toString(),
                   name: playerName,
@@ -854,7 +919,7 @@ export default function Overshare() {
                     await updateDoc(sessionRef, { players: updatedPlayers });
                     setPlayers(updatedPlayers);
                   }
-                  playSound('success');
+                  try { playSound('success'); } catch {}
                 }
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
@@ -866,7 +931,7 @@ export default function Overshare() {
           {isHost && !isNewPlayer && (
             <button
               onClick={async () => {
-                playSound('click');
+                try { playSound('click'); } catch {}
                 await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'categoryVoting' });
                 setGameState('categoryVoting');
               }}
@@ -891,8 +956,9 @@ export default function Overshare() {
     const allPlayersVoted = players.every((p) => (categoryVotes || {})[p.name] && (categoryVotes || {})[p.name].length > 0);
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items_center justify-center p-4">
-        <AudioControl />
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
@@ -922,7 +988,7 @@ export default function Overshare() {
                       isRecommended={isRecommended}
                       disabled={disabled}
                       onClick={() => {
-                        playSound('click');
+                        try { playSound('click'); } catch {}
                         if (isSelected) setSelectedCategories(selectedCategories.filter((c) => c !== key));
                         else if (selectedCategories.length < 3) setSelectedCategories([...selectedCategories, key]);
                       }}
@@ -965,11 +1031,8 @@ export default function Overshare() {
                   <p className="text-center text-gray-600 mb-4">All players have voted!</p>
                   <button
                     onClick={async () => {
-                      playSound('click');
-                      const topCats = calculateTopCategories(categoryVotes);
-                      await updateDoc(doc(db, 'sessions', sessionCode), {
-                        gameState: 'waitingForHost'
-                      });
+                      try { playSound('click'); } catch {}
+                      await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingForHost' });
                       setGameState('waitingForHost');
                     }}
                     className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
@@ -986,7 +1049,7 @@ export default function Overshare() {
                   {isHost && (
                     <button
                       onClick={async () => {
-                        playSound('click');
+                        try { playSound('click'); } catch {}
                         await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingForHost' });
                         setGameState('waitingForHost');
                       }}
@@ -1021,7 +1084,8 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
@@ -1060,7 +1124,7 @@ export default function Overshare() {
           {isHost ? (
             <button
               onClick={async () => {
-                playSound('click');
+                try { playSound('click'); } catch {}
                 await updateDoc(doc(db, 'sessions', sessionCode), {
                   gameState: 'relationshipSurvey',
                   selectedCategories: topCategories,
@@ -1088,7 +1152,8 @@ export default function Overshare() {
     if (currentPlayerIndex >= otherPlayers.length) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <AudioControl />
+          <TopBar />
+          <HelpModal />
           <NotificationToast />
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
             <div className="mb-6">
@@ -1099,7 +1164,7 @@ export default function Overshare() {
 
             <button
               onClick={() => {
-                playSound('success');
+                try { playSound('success'); } catch {}
                 handleRelationshipSurveySubmit();
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
@@ -1113,7 +1178,8 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
@@ -1130,7 +1196,7 @@ export default function Overshare() {
               <button
                 key={index}
                 onClick={() => {
-                  playSound('click');
+                  try { playSound('click'); } catch {}
                   setRelationshipAnswers({ ...relationshipAnswers, [currentPlayer.name]: option });
                 }}
                 className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
@@ -1150,7 +1216,8 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
@@ -1181,7 +1248,8 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
@@ -1213,7 +1281,7 @@ export default function Overshare() {
                       isSelected={false}
                       isRecommended={false}
                       onClick={() => {
-                        playSound('click');
+                        try { playSound('click'); } catch {}
                         handleCategoryPicked(categoryKey);
                       }}
                     />
@@ -1264,7 +1332,8 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <AudioControl />
+        <TopBar />
+        <HelpModal />
         <NotificationToast />
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
@@ -1321,7 +1390,7 @@ export default function Overshare() {
 
             <button
               onClick={() => {
-                playSound('click');
+                try { playSound('click'); } catch {}
                 setGameState('waitingRoom');
               }}
               className="w-full bg-white border-2 border-gray-300 text-gray-600 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 transition-all"
