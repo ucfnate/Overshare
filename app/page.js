@@ -10,9 +10,18 @@ import {
   updateDoc,
   onSnapshot,
   serverTimestamp,
-  arrayUnion
+  arrayUnion,
+  runTransaction
 } from 'firebase/firestore';
 import { questionCategories, getRandomQuestion } from '../lib/questionCategories';
+
+// ---- tiny utils ----
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+const LS = {
+  set(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} },
+  get(key, fallback=null) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
+  del(key) { try { localStorage.removeItem(key); } catch {} },
+};
 
 export default function Overshare() {
   // STATE MANAGEMENT
@@ -43,6 +52,7 @@ export default function Overshare() {
   // REFS
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
+  const hasBootstrappedRef = useRef(false);
 
   // CONFIGURATION
   const iconMap = useMemo(() => ({
@@ -73,7 +83,7 @@ export default function Overshare() {
     {
       id: 'group_energy',
       question: 'You contribute best to group conversations when:',
-      options: ['Everyone is laughing and having fun', 'There\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
+      options: ['Everyone is laughing and having fun', 'There\\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
     }
   ];
 
@@ -83,7 +93,7 @@ export default function Overshare() {
     'Friend (hang out regularly)',
     'Family member',
     'Coworker/colleague',
-    'Acquaintance (don\'t know well)',
+    'Acquaintance (don\\'t know well)',
     'Just met/new friend'
   ];
 
@@ -153,7 +163,7 @@ export default function Overshare() {
       'Friend (hang out regularly)': 3,
       'Family member': 4,
       'Coworker/colleague': 2,
-      'Acquaintance (don\'t know well)': 1,
+      'Acquaintance (don\\'t know well)': 1,
       'Just met/new friend': 1
     };
     const scores = Object.values(relationships).map((rel) => intimacyMap[rel] || 2);
@@ -227,7 +237,7 @@ export default function Overshare() {
         currentQuestion: '',
         currentCategory: '',
         currentQuestionAsker: '',
-        gameState: 'waiting',
+        gameState: 'waitingRoom', // important: renderable state
         selectedCategories: [],
         currentTurnIndex: 0,
         availableCategories: [],
@@ -290,7 +300,7 @@ export default function Overshare() {
           prevTurnIndexRef.current = incomingTurn;
         }
 
-        if (data.gameState !== gameState) {
+        if (data.gameState && data.gameState !== gameState) {
           setGameState(data.gameState);
           if (data.gameState === 'playing') try { playSound('success'); } catch {}
           else if (data.gameState === 'categoryPicking') try { playSound('turnTransition'); } catch {}
@@ -303,16 +313,39 @@ export default function Overshare() {
 
     unsubscribeRef.current = unsubscribe;
     return unsubscribe;
-  }, [db, playerName, gameState]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerName, gameState]);
 
+  // Bootstrap from localStorage (reconnect safety)
   useEffect(() => {
-    return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
-    };
-  }, []);
+    if (hasBootstrappedRef.current) return;
+    hasBootstrappedRef.current = true;
+
+    const savedName = LS.get('overshare_playerName', '');
+    const savedCode = LS.get('overshare_sessionCode', '');
+    const savedHost = !!LS.get('overshare_isHost', false);
+
+    if (savedName) setPlayerName(savedName);
+    if (savedCode) {
+      const code = String(savedCode).toUpperCase();
+      setSessionCode(code);
+      setIsHost(savedHost);
+      // show lobby while we attach
+      setGameState('waitingRoom');
+      listenToSession(code);
+    }
+  }, [listenToSession]);
+
+  // Persist to localStorage
+  useEffect(() => {
+    if (playerName) LS.set('overshare_playerName', playerName);
+  }, [playerName]);
+  useEffect(() => {
+    if (sessionCode) LS.set('overshare_sessionCode', sessionCode);
+  }, [sessionCode]);
+  useEffect(() => {
+    LS.set('overshare_isHost', !!isHost);
+  }, [isHost]);
 
   // EVENT HANDLERS
   const handleSurveySubmit = () => {
@@ -354,11 +387,11 @@ export default function Overshare() {
 
     if (!sessionSnap.exists()) return alert('Session not found. Please check the code and try again.');
 
+    // Duplicate-join guard (case-insensitive name compare)
     const sessionData = sessionSnap.data();
+    const exists = (sessionData.players || []).some((p) => (p.name || '').toLowerCase() === playerName.toLowerCase());
 
-    // Add player immediately if not present
-    const alreadyIn = (sessionData.players || []).some((p) => p.name === playerName);
-    if (!alreadyIn) {
+    if (!exists) {
       const newPlayer = {
         id: Date.now().toString(),
         name: playerName,
@@ -367,15 +400,19 @@ export default function Overshare() {
         joinedAt: new Date().toISOString()
       };
       try {
-        await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
+        // transactional upsert to avoid race
+        await runTransaction(db, async (tx) => {
+          const s = await tx.get(sessionRef);
+          if (!s.exists()) throw new Error('Session disappeared');
+          const data = s.data() || {};
+          const list = data.players || [];
+          const nameExists = list.some((p) => (p.name || '').toLowerCase() === playerName.toLowerCase());
+          if (!nameExists) {
+            tx.update(sessionRef, { players: [...list, newPlayer] });
+          }
+        });
       } catch (e) {
-        console.error('Failed to join via arrayUnion, falling back to read-modify-write', e);
-        const freshSnap = await getDoc(sessionRef);
-        if (freshSnap.exists()) {
-          const fresh = freshSnap.data();
-          const updated = [ ...(fresh.players || []), newPlayer ];
-          await updateDoc(sessionRef, { players: updated });
-        }
+        console.error('Join transaction failed', e);
       }
     }
 
@@ -701,13 +738,20 @@ export default function Overshare() {
     </div>
   );
 
+  // ---- UI SCREENS ----
+  const Shell = ({ children }) => (
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <TopBar />
+      <HelpModal />
+      <NotificationToast />
+      {children}
+    </div>
+  );
+
   // RENDER SCREENS - ALL INSIDE THE MAIN COMPONENT FUNCTION
   if (gameState === 'welcome') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
@@ -739,7 +783,7 @@ export default function Overshare() {
             Let's Get Started
           </button>
         </div>
-      </div>
+      </Shell>
     );
   }
 
@@ -749,10 +793,7 @@ export default function Overshare() {
 
     if (currentQuestionIndex >= initialSurveyQuestions.length) {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <TopBar />
-          <HelpModal />
-          <NotificationToast />
+        <Shell>
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
             <div className="mb-6">
               <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
@@ -770,15 +811,12 @@ export default function Overshare() {
               Continue
             </button>
           </div>
-        </div>
+        </Shell>
       );
     }
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
@@ -803,16 +841,13 @@ export default function Overshare() {
             ))}
           </div>
         </div>
-      </div>
+      </Shell>
     );
   }
 
   if (gameState === 'createOrJoin') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <h2 className="text-2xl font-bold text-gray-800 mb-6">Ready to play, {playerName}!</h2>
 
@@ -855,18 +890,15 @@ export default function Overshare() {
             </div>
           </div>
         </div>
-      </div>
+      </Shell>
     );
   }
 
   if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find((p) => p.name === playerName);
+    const isNewPlayer = !players.find((p) => (p.name || '').toLowerCase() === playerName.toLowerCase());
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-2">Session {sessionCode}</h2>
@@ -875,7 +907,7 @@ export default function Overshare() {
 
           <PlayerList players={players} title="Players" />
 
-          {selectedCategories.length > 0 && (
+          {selectedCategories.length > 0 and (
             <div className="mb-6">
               <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
               <div className="flex flex-wrap gap-2">
@@ -900,27 +932,29 @@ export default function Overshare() {
             <button
               onClick={async () => {
                 try { playSound('click'); } catch {}
-                const newPlayer = {
-                  id: Date.now().toString(),
-                  name: playerName,
-                  isHost: false,
-                  surveyAnswers,
-                  joinedAt: new Date().toISOString()
-                };
-
                 const sessionRef = doc(db, 'sessions', sessionCode);
-                const snap = await getDoc(sessionRef);
-                if (snap.exists()) {
-                  try {
-                    await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
-                  } catch (e) {
-                    const data = snap.data();
-                    const updatedPlayers = [ ...(data.players || []), newPlayer ];
-                    await updateDoc(sessionRef, { players: updatedPlayers });
-                    setPlayers(updatedPlayers);
-                  }
-                  try { playSound('success'); } catch {}
+                try {
+                  await runTransaction(db, async (tx) => {
+                    const s = await tx.get(sessionRef);
+                    if (!s.exists()) throw new Error('Session missing');
+                    const data = s.data() || {};
+                    const list = data.players || [];
+                    const exists = list.some((p) => (p.name || '').toLowerCase() === playerName.toLowerCase());
+                    if (!exists) {
+                      const newPlayer = {
+                        id: Date.now().toString(),
+                        name: playerName,
+                        isHost: false,
+                        surveyAnswers,
+                        joinedAt: new Date().toISOString()
+                      };
+                      tx.update(sessionRef, { players: [...list, newPlayer] });
+                    }
+                  });
+                } catch (e) {
+                  console.error('Join button transaction failed', e);
                 }
+                try { playSound('success'); } catch {}
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
             >
@@ -944,7 +978,7 @@ export default function Overshare() {
 
           {!isHost && !isNewPlayer && <p className="text-gray-500">Waiting for host to continue...</p>}
         </div>
-      </div>
+      </Shell>
     );
   }
 
@@ -956,10 +990,7 @@ export default function Overshare() {
     const allPlayersVoted = players.every((p) => (categoryVotes || {})[p.name] && (categoryVotes || {})[p.name].length > 0);
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
             <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
@@ -1068,7 +1099,7 @@ export default function Overshare() {
             </div>
           )}
         </div>
-      </div>
+      </Shell>
     );
   }
 
@@ -1083,10 +1114,7 @@ export default function Overshare() {
     const topCategories = calculateTopCategories(categoryVotes || {});
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-gray-800 mb-2">All Votes Are In!</h2>
@@ -1140,7 +1168,7 @@ export default function Overshare() {
             <p className="text-gray-500">Waiting for {players.find((p) => p.isHost)?.name || 'host'} to continue...</p>
           )}
         </div>
-      </div>
+      </Shell>
     );
   }
 
@@ -1151,10 +1179,7 @@ export default function Overshare() {
 
     if (currentPlayerIndex >= otherPlayers.length) {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <TopBar />
-          <HelpModal />
-          <NotificationToast />
+        <Shell>
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
             <div className="mb-6">
               <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
@@ -1172,15 +1197,12 @@ export default function Overshare() {
               Continue
             </button>
           </div>
-        </div>
+        </Shell>
       );
     }
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
@@ -1206,7 +1228,7 @@ export default function Overshare() {
             ))}
           </div>
         </div>
-      </div>
+      </Shell>
     );
   }
 
@@ -1215,10 +1237,7 @@ export default function Overshare() {
     const waitingFor = players.filter((p) => !p.relationshipAnswers).map((p) => p.name);
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
             <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
@@ -1238,7 +1257,7 @@ export default function Overshare() {
             </div>
           )}
         </div>
-      </div>
+      </Shell>
     );
   }
 
@@ -1247,10 +1266,7 @@ export default function Overshare() {
     const isMyTurn = currentPlayer?.name === playerName;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
             <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
@@ -1316,7 +1332,7 @@ export default function Overshare() {
             </div>
           )}
         </div>
-      </div>
+      </Shell>
     );
   }
 
@@ -1331,10 +1347,7 @@ export default function Overshare() {
     const turn = players.length ? ((turnHistory.length || 0) % players.length) + 1 : 1;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+      <Shell>
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4">
@@ -1399,9 +1412,19 @@ export default function Overshare() {
             </button>
           </div>
         </div>
-      </div>
+      </Shell>
     );
   }
 
-  return null;
+  // ---- NEVER-BLANK FALLBACK ----
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-6 text-white">
+      <TopBar />
+      <HelpModal />
+      <div className="text-center">
+        <LoadingSpinner size="w-12 h-12" />
+        <p className="mt-4 opacity-90">Loading…</p>
+      </div>
+    </div>
+  );
 }
