@@ -73,7 +73,7 @@ export default function Overshare() {
     {
       id: 'group_energy',
       question: 'You contribute best to group conversations when:',
-      options: ['Everyone is laughing and having fun', 'There\\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
+      options: ['Everyone is laughing and having fun', 'There\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
     }
   ];
 
@@ -83,7 +83,7 @@ export default function Overshare() {
     'Friend (hang out regularly)',
     'Family member',
     'Coworker/colleague',
-    'Acquaintance (don\\'t know well)',
+    'Acquaintance (don\'t know well)',
     'Just met/new friend'
   ];
 
@@ -153,7 +153,7 @@ export default function Overshare() {
       'Friend (hang out regularly)': 3,
       'Family member': 4,
       'Coworker/colleague': 2,
-      'Acquaintance (don\\'t know well)': 1,
+      'Acquaintance (don\'t know well)': 1,
       'Just met/new friend': 1
     };
     const scores = Object.values(relationships).map((rel) => intimacyMap[rel] || 2);
