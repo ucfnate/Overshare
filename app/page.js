@@ -576,6 +576,7 @@ export default function Overshare() {
      Handlers: Relationship Survey & Voting
   ========================= */
   const handleRelationshipSurveySubmit = async () => {
+    if (!sessionCode) return;
     try {
       const sessionRef = doc(db, 'sessions', sessionCode);
       const sessionSnap = await getDoc(sessionRef);
@@ -590,7 +591,12 @@ export default function Overshare() {
 
       const allCompleted = updatedPlayers.every((p) => p?.relationshipAnswers);
       if (allCompleted) {
-        const top = data.selectedCategories || [];
+        // Fallback if selectedCategories never got set
+        const top =
+          (data.selectedCategories && data.selectedCategories.length > 0)
+            ? data.selectedCategories
+            : Object.keys(CATEGORIES);
+
         await updateDoc(sessionRef, {
           gameState: 'categoryPicking',
           currentTurnIndex: 0,
@@ -611,6 +617,7 @@ export default function Overshare() {
   };
 
   const handleCategoryVote = async (selectedCats) => {
+    if (!sessionCode) return;
     try {
       const sessionRef = doc(db, 'sessions', sessionCode);
       const sessionSnap = await getDoc(sessionRef);
@@ -647,6 +654,7 @@ export default function Overshare() {
      Handlers: Picking / Playing Flow
   ========================= */
   const handleCategoryPicked = async (category) => {
+    if (!sessionCode) return;
     try {
       const currentPlayer = players[currentTurnIndex] || players[0];
       if (!currentPlayer) return;
@@ -692,6 +700,7 @@ export default function Overshare() {
       showNotification("You've used your skip for this turn!", '⏭️');
       return;
     }
+    if (!sessionCode) return;
     try {
       const newQuestion = generatePersonalizedQuestion(
         players,
@@ -711,6 +720,7 @@ export default function Overshare() {
   };
 
   const handleNextQuestion = async () => {
+    if (!sessionCode) return;
     try {
       const count = players.length || 0;
       if (count === 0) return;
@@ -1180,6 +1190,7 @@ export default function Overshare() {
           {isHost && !isNewPlayer && (
             <button
               onClick={async () => {
+                if (!sessionCode) return;
                 try {
                   playSound('click');
                 } catch {}
@@ -1306,6 +1317,7 @@ export default function Overshare() {
                   <p className="text-center text-gray-600 mb-4">All players have voted!</p>
                   <button
                     onClick={async () => {
+                      if (!sessionCode) return;
                       try {
                         playSound('click');
                       } catch {}
@@ -1328,6 +1340,7 @@ export default function Overshare() {
                   {isHost && (
                     <button
                       onClick={async () => {
+                        if (!sessionCode) return;
                         try {
                           playSound('click');
                         } catch {}
@@ -1369,6 +1382,15 @@ export default function Overshare() {
     });
     const topCategories = calculateTopCategories(categoryVotes || {});
 
+    // CHANGED: build a safe list we can always proceed with
+    const recommendedFallback = recommendCategories(players, relationshipAnswers);
+    const safeTop =
+      (topCategories && topCategories.length > 0)
+        ? topCategories
+        : (recommendedFallback && recommendedFallback.length > 0)
+          ? recommendedFallback
+          : Object.keys(CATEGORIES);
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <TopBar />
@@ -1388,7 +1410,7 @@ export default function Overshare() {
                   const category = CATEGORIES[categoryKey];
                   const IconComponent =
                     category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-                  const isSelected = (topCategories || []).includes(categoryKey);
+                  const isSelected = (safeTop || []).includes(categoryKey);
                   return (
                     <div
                       key={categoryKey}
@@ -1416,13 +1438,14 @@ export default function Overshare() {
           {isHost ? (
             <button
               onClick={async () => {
+                if (!sessionCode) return;
                 try {
                   playSound('click');
                 } catch {}
                 await updateDoc(doc(db, 'sessions', sessionCode), {
                   gameState: 'relationshipSurvey',
-                  selectedCategories: topCategories,
-                  availableCategories: topCategories
+                  selectedCategories: safeTop,
+                  availableCategories: safeTop
                 });
                 setGameState('relationshipSurvey');
               }}
@@ -1503,6 +1526,7 @@ export default function Overshare() {
                   try {
                     playSound('click');
                   } catch {}
+                  if (!currentPlayer?.name) return;
                   setRelationshipAnswers((prev) => ({ ...prev, [currentPlayer.name]: option }));
                 }}
                 className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
@@ -1647,9 +1671,10 @@ export default function Overshare() {
 
   /* =========================
      Screens: Playing
+     CHANGED: use CATEGORIES for currentCategoryData (fix crash)
   ========================= */
   if (gameState === 'playing') {
-    const currentCategoryData = questionCategories[currentCategory];
+    const currentCategoryData = CATEGORIES[currentCategory] || null; // <-- FIXED
     const IconComponent =
       currentCategoryData && iconMap[currentCategoryData.icon]
         ? iconMap[currentCategoryData.icon]
