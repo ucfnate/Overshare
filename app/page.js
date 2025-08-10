@@ -70,7 +70,7 @@ export default function Overshare() {
     {
       id: 'group_energy',
       question: 'You contribute best to group conversations when:',
-      options: ['Everyone is laughing and having fun', "There's a good mix of personalities", 'People are being real and authentic', 'The conversation has depth and meaning']
+      options: ['Everyone is laughing and having fun', 'There\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
     }
   ];
 
@@ -154,25 +154,25 @@ export default function Overshare() {
     return scores.reduce((a, b) => a + b, 0) / scores.length;
   };
 
-  const getGroupComfortLevel = (players) => {
-    if (!players || players.length === 0) return 2;
+  const getGroupComfortLevel = (playersArr) => {
+    if (!playersArr || playersArr.length === 0) return 2;
     const comfortMap = {
       'Light, fun topics that make everyone laugh': 2,
       'Mix of light and meaningful discussions': 3,
       'Deep, personal conversations': 4,
       'Thought-provoking questions about life': 4
     };
-    const scores = players
+    const scores = playersArr
       .filter((p) => p.surveyAnswers?.comfort_level)
       .map((p) => comfortMap[p.surveyAnswers.comfort_level] || 2);
     if (scores.length === 0) return 2;
     return scores.reduce((a, b) => a + b, 0) / scores.length;
   };
 
-  const recommendCategories = (players, relationships) => {
+  const recommendCategories = (playersArr, relationships) => {
     const intimacyScore = calculateGroupIntimacy(relationships);
-    const comfortLevel = getGroupComfortLevel(players);
-    const groupSize = players.length;
+    const comfortLevel = getGroupComfortLevel(playersArr);
+    const groupSize = playersArr.length;
     let recommended = [];
 
     if (groupSize > 3 || intimacyScore < 3) recommended.push('icebreakers');
@@ -184,11 +184,11 @@ export default function Overshare() {
     return recommended;
   };
 
-  const generatePersonalizedQuestion = (players, surveyData, relationships, forceCategory = null) => {
+  const generatePersonalizedQuestion = (playersArr, surveyData, relationships, forceCategory = null) => {
     let category = forceCategory;
     if (!category) {
       if (selectedCategories.length === 0) {
-        const recommended = recommendCategories(players, relationships);
+        const recommended = recommendCategories(playersArr, relationships);
         category = recommended[Math.floor(Math.random() * recommended.length)] || 'icebreakers';
       } else {
         category = selectedCategories[Math.floor(Math.random() * selectedCategories.length)];
@@ -201,7 +201,7 @@ export default function Overshare() {
 
   const calculateTopCategories = (votes) => {
     const voteCount = {};
-    Object.values(votes).forEach((playerVotes) => {
+    Object.values(votes || {}).forEach((playerVotes) => {
       (playerVotes || []).forEach((category) => {
         voteCount[category] = (voteCount[category] || 0) + 1;
       });
@@ -220,7 +220,7 @@ export default function Overshare() {
         currentQuestion: '',
         currentCategory: '',
         currentQuestionAsker: '',
-        gameState: 'waitingRoom',
+        gameState: 'waiting',
         selectedCategories: [],
         currentTurnIndex: 0,
         availableCategories: [],
@@ -328,6 +328,7 @@ export default function Overshare() {
     setPlayers([hostPlayer]);
     setGameState('waitingRoom');
     try { playSound('success'); } catch {}
+
     listenToSession(code);
   };
 
@@ -354,6 +355,7 @@ export default function Overshare() {
       try {
         await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
       } catch (e) {
+        console.error('Failed to join via arrayUnion, falling back to read-modify-write', e);
         const freshSnap = await getDoc(sessionRef);
         if (freshSnap.exists()) {
           const fresh = freshSnap.data();
@@ -652,11 +654,11 @@ export default function Overshare() {
     );
   };
 
-  const PlayerList = ({ players, title, showProgress = false, currentPlayerName = null }) => (
+  const PlayerList = ({ players: playersArr, title, showProgress = false, currentPlayerName = null }) => (
     <div className="mb-6">
-      <h3 className="text-lg font-semibold text-gray-800 mb-3">{title} ({players.length})</h3>
+      <h3 className="text-lg font-semibold text-gray-800 mb-3">{title} ({playersArr.length})</h3>
       <div className="space-y-2">
-        {players.map((player, index) => (
+        {playersArr.map((player, index) => (
           <div
             key={index}
             className={`flex items-center justify-between p-3 bg-gray-50 rounded-xl ${
@@ -841,7 +843,7 @@ export default function Overshare() {
     );
   }
 
-  if (gameState === 'waitingRoom' || gameState === 'waiting') {
+  if (gameState === 'waitingRoom') {
     const isNewPlayer = !players.find((p) => p.name === playerName);
 
     return (
@@ -862,7 +864,7 @@ export default function Overshare() {
               <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
               <div className="flex flex-wrap gap-2">
                 {selectedCategories.map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
+                  const category = (questionCategories || {})[categoryKey];
                   const IconComponent = (category && iconMap[category.icon]) ? iconMap[category.icon] : MessageCircle;
                   return (
                     <div
@@ -957,7 +959,7 @@ export default function Overshare() {
           {!hasVotedCategories ? (
             <>
               <div className="space-y-3 mb-6">
-                {Object.entries(questionCategories).map(([key, category]) => {
+                {Object.entries(questionCategories || {}).map(([key, category]) => {
                   const isRecommended = recommended.includes(key);
                   const isSelected = selectedCategories.includes(key);
                   const disabled = !isSelected && selectedCategories.length >= 3;
@@ -993,7 +995,7 @@ export default function Overshare() {
                 <h3 className="text-lg font-semibold text-gray-800 mb-3">Your Votes:</h3>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {myVotedCategories.map((categoryKey) => {
-                    const category = questionCategories[categoryKey];
+                    const category = (questionCategories || {})[categoryKey];
                     const IconComponent = (category && iconMap[category.icon]) ? iconMap[category.icon] : MessageCircle;
                     return (
                       <div
@@ -1077,10 +1079,10 @@ export default function Overshare() {
 
           <div className="mb-6">
             <div className="space-y-2">
-              {Object.entries(voteResults)
+              {Object.entries(voteResults || {})
                 .sort((a, b) => b[1] - a[1])
                 .map(([categoryKey, voteCount]) => {
-                  const category = questionCategories[categoryKey];
+                  const category = (questionCategories || {})[categoryKey];
                   const IconComponent = (category && iconMap[category.icon]) ? iconMap[category.icon] : MessageCircle;
                   const isSelected = topCategories.includes(categoryKey);
                   return (
@@ -1254,7 +1256,7 @@ export default function Overshare() {
             <div className="space-y-3">
               {availableCategories.length > 0 ? (
                 availableCategories.map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
+                  const category = (questionCategories || {})[categoryKey];
                   return (
                     <CategoryCard
                       key={categoryKey}
@@ -1287,7 +1289,7 @@ export default function Overshare() {
               <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
               <div className="flex flex-wrap gap-2">
                 {usedCategories.map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
+                  const category = (questionCategories || {})[categoryKey];
                   return (
                     <span key={categoryKey} className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full">
                       {category?.name || categoryKey}
@@ -1303,7 +1305,7 @@ export default function Overshare() {
   }
 
   if (gameState === 'playing') {
-    const currentCategoryData = questionCategories[currentCategory];
+    const currentCategoryData = (questionCategories || {})[currentCategory];
     const IconComponent = currentCategoryData && iconMap[currentCategoryData.icon] ? iconMap[currentCategoryData.icon] : MessageCircle;
     const currentPlayer = players[currentTurnIndex] || players[0];
     const isMyTurn = currentPlayer?.name === playerName;
