@@ -28,7 +28,10 @@ import {
   serverTimestamp,
   arrayUnion
 } from 'firebase/firestore';
-import { questionCategories, getRandomQuestion } from '../lib/questionCategories';
+import {
+  questionCategories as qcImport,
+  getRandomQuestion as getRandomQImport
+} from '../lib/questionCategories';
 
 /* =========================
    Main Component
@@ -85,6 +88,95 @@ export default function Overshare() {
       Flame,
       MessageCircle
     }),
+    []
+  );
+
+  // Fallback categories (used only if import is missing/shape is different)
+  const FALLBACK_CATEGORIES = useMemo(
+    () => ({
+      icebreakers: {
+        name: 'Icebreakers',
+        description: 'Warm up with easy, fun prompts.',
+        icon: 'Sparkles',
+        color: 'from-purple-500 to-pink-500'
+      },
+      creative: {
+        name: 'Creative',
+        description: 'Imagine, riff, and get playful.',
+        icon: 'Lightbulb',
+        color: 'from-indigo-500 to-purple-500'
+      },
+      deep_dive: {
+        name: 'Deep Dive',
+        description: 'Thoughtful questions with heart.',
+        icon: 'MessageCircle',
+        color: 'from-blue-500 to-cyan-500'
+      },
+      growth: {
+        name: 'Growth',
+        description: 'Reflect, learn, and level up.',
+        icon: 'Target',
+        color: 'from-emerald-500 to-teal-500'
+      },
+      spicy: {
+        name: 'Spicy',
+        description: 'Bold prompts for brave groups.',
+        icon: 'Flame',
+        color: 'from-orange-500 to-red-500'
+      }
+    }),
+    []
+  );
+
+  // Resolve categories regardless of export style (named vs default)
+  const CATEGORIES = useMemo(() => {
+    const raw =
+      qcImport && typeof qcImport === 'object'
+        ? (qcImport.default && typeof qcImport.default === 'object'
+            ? qcImport.default
+            : qcImport)
+        : {};
+
+    const keys = Object.keys(raw || {});
+    if (keys.length > 0) return raw;
+
+    return FALLBACK_CATEGORIES;
+  }, [FALLBACK_CATEGORIES]);
+
+  // Safe question getter (works even if helper not exported)
+  const getQuestion = useCallback(
+    (categoryKey) => {
+      if (typeof getRandomQImport === 'function') {
+        try {
+          const q = getRandomQImport(categoryKey);
+          if (q) return q;
+        } catch {}
+      }
+      const fallbackQs = {
+        icebreakers: [
+          'What was a small win you had this week?',
+          'What’s your go-to fun fact about yourself?'
+        ],
+        creative: [
+          'Invent a wild holiday and describe how we celebrate it.',
+          'Merge two movies into one plot — what happens?'
+        ],
+        deep_dive: [
+          'What belief of yours has changed in the last few years?',
+          'What’s a memory that shaped who you are?'
+        ],
+        growth: [
+          'What habit are you trying to build?',
+          'What’s a risk you’re glad you took?'
+        ],
+        spicy: [
+          'What’s a “hot take” you stand by?',
+          'What’s a topic you wish people were more honest about?'
+        ]
+      };
+      const pool = fallbackQs[categoryKey] || fallbackQs.icebreakers;
+      return pool[Math.floor(Math.random() * pool.length)];
+    },
     []
   );
 
@@ -268,7 +360,7 @@ export default function Overshare() {
           'icebreakers';
       }
     }
-    const question = getRandomQuestion(category);
+    const question = getQuestion(category);
     setCurrentCategory(category);
     return question;
   };
@@ -296,7 +388,6 @@ export default function Overshare() {
         currentQuestion: '',
         currentCategory: '',
         currentQuestionAsker: '',
-        // IMPORTANT: use a state that actually renders
         gameState: 'waitingRoom',
         selectedCategories: [],
         currentTurnIndex: 0,
@@ -1031,7 +1122,7 @@ export default function Overshare() {
               <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
               <div className="flex flex-wrap gap-2">
                 {selectedCategories.map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
+                  const category = CATEGORIES[categoryKey];
                   const IconComponent =
                     category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                   return (
@@ -1124,6 +1215,8 @@ export default function Overshare() {
       (p) => (categoryVotes || {})[p?.name] && (categoryVotes || {})[p?.name].length > 0
     );
 
+    const entries = Object.entries(CATEGORIES || {}); // <- ensures we render something
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <TopBar />
@@ -1148,7 +1241,7 @@ export default function Overshare() {
           {!hasVotedCategories ? (
             <>
               <div className="space-y-3 mb-6">
-                {Object.entries(questionCategories || {}).map(([key, category]) => {
+                {entries.map(([key, category]) => {
                   const isRecommended = (recommended || []).includes(key);
                   const isSelected = (selectedCategories || []).includes(key);
                   const disabled = !isSelected && (selectedCategories || []).length >= 3;
@@ -1190,7 +1283,7 @@ export default function Overshare() {
                 <h3 className="text-lg font-semibold text-gray-800 mb-3">Your Votes:</h3>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {(myVotedCategories || []).map((categoryKey) => {
-                    const category = questionCategories[categoryKey];
+                    const category = CATEGORIES[categoryKey];
                     const IconComponent =
                       category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                     return (
@@ -1292,7 +1385,7 @@ export default function Overshare() {
               {Object.entries(voteResults)
                 .sort((a, b) => b[1] - a[1])
                 .map(([categoryKey, voteCount]) => {
-                  const category = questionCategories[categoryKey];
+                  const category = CATEGORIES[categoryKey];
                   const IconComponent =
                     category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                   const isSelected = (topCategories || []).includes(categoryKey);
@@ -1497,7 +1590,7 @@ export default function Overshare() {
             <div className="space-y-3">
               {(availableCategories || []).length > 0 ? (
                 (availableCategories || []).map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
+                  const category = CATEGORIES[categoryKey];
                   return (
                     <CategoryCard
                       key={categoryKey}
@@ -1534,7 +1627,7 @@ export default function Overshare() {
               <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
               <div className="flex flex-wrap gap-2">
                 {(usedCategories || []).map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
+                  const category = CATEGORIES[categoryKey];
                   return (
                     <span
                       key={categoryKey}
