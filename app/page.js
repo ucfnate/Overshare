@@ -1,8 +1,8 @@
 'use client';
 
-/* ===========================
+/* =========================
    Imports
-   =========================== */
+========================= */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Users,
@@ -30,13 +30,13 @@ import {
 } from 'firebase/firestore';
 import { questionCategories, getRandomQuestion } from '../lib/questionCategories';
 
-/* ===========================
+/* =========================
    Main Component
-   =========================== */
+========================= */
 export default function Overshare() {
-  /* ===========================
-     State: Game + UI
-     =========================== */
+  /* =========================
+     State
+  ========================= */
   const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
@@ -45,14 +45,17 @@ export default function Overshare() {
   const [players, setPlayers] = useState([]);
   const [surveyAnswers, setSurveyAnswers] = useState({});
   const [relationshipAnswers, setRelationshipAnswers] = useState({});
+
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [currentCategory, setCurrentCategory] = useState('');
   const [selectedCategories, setSelectedCategories] = useState([]);
+
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [availableCategories, setAvailableCategories] = useState([]);
   const [usedCategories, setUsedCategories] = useState([]);
   const [turnHistory, setTurnHistory] = useState([]);
   const [currentQuestionAsker, setCurrentQuestionAsker] = useState('');
+
   const [categoryVotes, setCategoryVotes] = useState({});
   const [myVotedCategories, setMyVotedCategories] = useState([]);
   const [hasVotedCategories, setHasVotedCategories] = useState(false);
@@ -63,16 +66,16 @@ export default function Overshare() {
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
 
-  /* ===========================
+  /* =========================
      Refs
-     =========================== */
+  ========================= */
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
 
-  /* ===========================
-     Icons + Static Config
-     =========================== */
+  /* =========================
+     Config / Memos
+  ========================= */
   const iconMap = useMemo(
     () => ({
       Sparkles,
@@ -138,15 +141,16 @@ export default function Overshare() {
     'Just met/new friend'
   ];
 
-  /* ===========================
-     Audio (no eval / CSP-safe)
-     =========================== */
+  /* =========================
+     Audio (no eval, CSP-safe)
+  ========================= */
   const getAudio = () => {
     if (!audioEnabled) return null;
     try {
       if (!audioCtxRef.current) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (Ctx) audioCtxRef.current = new Ctx();
+        if (!Ctx) return null;
+        audioCtxRef.current = new Ctx();
       }
       return audioCtxRef.current;
     } catch {
@@ -155,29 +159,29 @@ export default function Overshare() {
   };
 
   const playSound = (type) => {
-    const audioContext = getAudio();
-    if (!audioContext) return;
+    const audio = getAudio();
+    if (!audio) return;
 
-    const makeTone = (seq) => {
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-      seq(oscillator, gainNode, audioContext.currentTime);
-      oscillator.start();
+    const tone = (seq) => {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.connect(gain);
+      gain.connect(audio.destination);
+      gain.gain.setValueAtTime(0.1, audio.currentTime);
+      seq(osc, gain, audio.currentTime);
+      osc.start();
     };
 
     const sounds = {
       click: () =>
-        makeTone((osc, gain, t0) => {
+        tone((osc, gain, t0) => {
           osc.frequency.setValueAtTime(800, t0);
           osc.frequency.exponentialRampToValueAtTime(600, t0 + 0.1);
           gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.1);
           osc.stop(t0 + 0.1);
         }),
       success: () =>
-        makeTone((osc, gain, t0) => {
+        tone((osc, gain, t0) => {
           osc.frequency.setValueAtTime(523, t0);
           osc.frequency.setValueAtTime(659, t0 + 0.1);
           osc.frequency.setValueAtTime(784, t0 + 0.2);
@@ -185,7 +189,7 @@ export default function Overshare() {
           osc.stop(t0 + 0.3);
         }),
       turnTransition: () =>
-        makeTone((osc, gain, t0) => {
+        tone((osc, gain, t0) => {
           osc.frequency.setValueAtTime(440, t0);
           osc.frequency.setValueAtTime(554, t0 + 0.15);
           gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
@@ -196,22 +200,20 @@ export default function Overshare() {
     if (sounds[type]) sounds[type]();
   };
 
-  /* ===========================
+  /* =========================
      Notifications
-     =========================== */
+  ========================= */
   const showNotification = (message, emoji = '🎉') => {
     setNotification({ message, emoji });
-    window.setTimeout(() => setNotification(null), 3000);
+    window.clearTimeout((showNotification._t || 0));
+    showNotification._t = window.setTimeout(() => setNotification(null), 3000);
   };
 
-  /* ===========================
-     Algorithms
-     =========================== */
+  /* =========================
+     Algorithms (category logic)
+  ========================= */
   const calculateGroupIntimacy = (relationships) => {
-    const rel = relationships || {};
-    const keys = Object.keys(rel);
-    if (keys.length === 0) return 2;
-
+    if (!relationships || Object.keys(relationships).length === 0) return 2;
     const intimacyMap = {
       'Romantic partner/spouse': 5,
       'Close friend (know each other well)': 4,
@@ -221,83 +223,71 @@ export default function Overshare() {
       "Acquaintance (don't know well)": 1,
       'Just met/new friend': 1
     };
-
-    const scores = keys.map((k) => intimacyMap[rel[k]] || 2);
+    const scores = Object.values(relationships).map((rel) => intimacyMap[rel] || 2);
     return scores.reduce((a, b) => a + b, 0) / scores.length;
   };
 
-  const getGroupComfortLevel = (playersList) => {
-    const list = playersList || [];
-    if (list.length === 0) return 2;
-
+  const getGroupComfortLevel = (list) => {
+    if (!list || list.length === 0) return 2;
     const comfortMap = {
       'Light, fun topics that make everyone laugh': 2,
       'Mix of light and meaningful discussions': 3,
       'Deep, personal conversations': 4,
       'Thought-provoking questions about life': 4
     };
-
-    const scores = list
-      .filter((p) => p && p.surveyAnswers && p.surveyAnswers.comfort_level)
-      .map((p) => comfortMap[p.surveyAnswers.comfort_level] || 2);
-
+    const scores =
+      list
+        .filter((p) => p?.surveyAnswers?.comfort_level)
+        .map((p) => comfortMap[p.surveyAnswers.comfort_level] || 2) || [];
     if (scores.length === 0) return 2;
     return scores.reduce((a, b) => a + b, 0) / scores.length;
   };
 
-  const recommendCategories = (playersList, relationships) => {
-    const intimacyScore = calculateGroupIntimacy(relationships);
-    const comfortLevel = getGroupComfortLevel(playersList);
-    const groupSize = (playersList || []).length;
-    const recommended = [];
-
-    if (groupSize > 3 || intimacyScore < 3) recommended.push('icebreakers');
-    if (groupSize > 2) recommended.push('creative');
-    if (intimacyScore >= 3 && comfortLevel >= 3) recommended.push('deep_dive');
-    if (intimacyScore >= 4 || (groupSize === 2 && intimacyScore >= 3)) recommended.push('growth');
-    if (intimacyScore >= 4 && comfortLevel >= 4 && groupSize <= 4) recommended.push('spicy');
-
-    return recommended;
+  const recommendCategories = (list, relationships) => {
+    const intimacy = calculateGroupIntimacy(relationships);
+    const comfort = getGroupComfortLevel(list);
+    const groupSize = list?.length || 0;
+    const rec = [];
+    if (groupSize > 3 || intimacy < 3) rec.push('icebreakers');
+    if (groupSize > 2) rec.push('creative');
+    if (intimacy >= 3 && comfort >= 3) rec.push('deep_dive');
+    if (intimacy >= 4 || (groupSize === 2 && intimacy >= 3)) rec.push('growth');
+    if (intimacy >= 4 && comfort >= 4 && groupSize <= 4) rec.push('spicy');
+    return rec;
   };
 
-  const generatePersonalizedQuestion = (playersList, surveyData, relationships, forceCategory = null) => {
-    let category = forceCategory || null;
-
+  const generatePersonalizedQuestion = (list, surveyData, relationships, forceCategory = null) => {
+    let category = forceCategory;
     if (!category) {
       if ((selectedCategories || []).length === 0) {
-        const rec = recommendCategories(playersList, relationships);
-        category = rec[Math.floor(Math.random() * rec.length)] || 'icebreakers';
+        const rec = recommendCategories(list, relationships);
+        category = rec[Math.floor(Math.random() * (rec.length || 1))] || 'icebreakers';
       } else {
-        const pool = selectedCategories || [];
-        category = pool[Math.floor(Math.random() * pool.length)];
+        category =
+          selectedCategories[Math.floor(Math.random() * selectedCategories.length)] ||
+          'icebreakers';
       }
     }
-
     const question = getRandomQuestion(category);
     setCurrentCategory(category);
     return question;
   };
 
   const calculateTopCategories = (votes) => {
-    const safeVotes = votes || {};
+    const byPlayer = votes || {};
     const voteCount = {};
-    Object.values(safeVotes).forEach((arr) => {
-      (arr || []).forEach((cat) => {
+    Object.values(byPlayer).forEach((playerVotes) => {
+      (playerVotes || []).forEach((cat) => {
         voteCount[cat] = (voteCount[cat] || 0) + 1;
       });
     });
-
-    const sorted = Object.entries(voteCount)
-      .sort((a, b) => b[1] - a[1])
-      .map(([k]) => k);
-
-    const limit = Math.min(4, Math.max(3, sorted.length));
-    return sorted.slice(0, limit);
+    const sorted = Object.entries(voteCount).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+    return sorted.slice(0, Math.min(4, Math.max(3, sorted.length)));
   };
 
-  /* ===========================
-     Firestore: Create + Listen
-     =========================== */
+  /* =========================
+     Firestore Session Helpers
+  ========================= */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
@@ -306,7 +296,8 @@ export default function Overshare() {
         currentQuestion: '',
         currentCategory: '',
         currentQuestionAsker: '',
-        gameState: 'waitingRoom', // was 'waiting' causing black screen
+        // IMPORTANT: use a state that actually renders
+        gameState: 'waitingRoom',
         selectedCategories: [],
         currentTurnIndex: 0,
         availableCategories: [],
@@ -326,13 +317,12 @@ export default function Overshare() {
     (code) => {
       if (!code) return () => {};
 
-      const sessionRef = doc(db, 'sessions', code);
-
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
         unsubscribeRef.current = null;
       }
 
+      const sessionRef = doc(db, 'sessions', code);
       let previousPlayerCount = 0;
 
       const unsubscribe = onSnapshot(
@@ -341,11 +331,9 @@ export default function Overshare() {
           if (!snap.exists()) return;
           const data = snap.data() || {};
 
-          // players
-          const incomingPlayers = Array.isArray(data.players) ? data.players : [];
-          const newCount = incomingPlayers.length;
+          const newCount = (data.players || []).length;
           if (previousPlayerCount > 0 && newCount > previousPlayerCount) {
-            const newPlayer = incomingPlayers[newCount - 1];
+            const newPlayer = (data.players || [])[newCount - 1];
             if (newPlayer && newPlayer.name !== playerName) {
               showNotification(`${newPlayer.name} joined the game!`, '👋');
               try {
@@ -354,45 +342,45 @@ export default function Overshare() {
             }
           }
           previousPlayerCount = newCount;
-          setPlayers([...incomingPlayers]);
 
-          // simple fields
+          setPlayers([...(data.players || [])]);
           setCurrentQuestion(data.currentQuestion || '');
           setCurrentCategory(data.currentCategory || '');
           setCurrentQuestionAsker(data.currentQuestionAsker || '');
           setSelectedCategories([...(data.selectedCategories || [])]);
-          setCurrentTurnIndex(typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0);
+          setCurrentTurnIndex(
+            typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0
+          );
           setAvailableCategories([...(data.availableCategories || [])]);
           setUsedCategories([...(data.usedCategories || [])]);
           setTurnHistory([...(data.turnHistory || [])]);
           setCategoryVotes(data.categoryVotes || {});
 
-          // reset skip on authoritative turn change
-          const incomingTurn = typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
+          const incomingRaw = data.gameState || 'waitingRoom';
+          const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
+
+          const incomingTurn =
+            typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
           if (incomingTurn !== prevTurnIndexRef.current) {
             setSkipsUsedThisTurn(0);
             prevTurnIndexRef.current = incomingTurn;
           }
 
-          // normalize legacy 'waiting' to 'waitingRoom'
-          const incomingRaw = data.gameState || 'waitingRoom';
-          const normalized = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
-
-          if (normalized !== gameState) {
-            setGameState(normalized);
-            if (normalized === 'playing') {
+          if (incoming !== gameState) {
+            setGameState(incoming);
+            if (incoming === 'playing') {
               try {
                 playSound('success');
               } catch {}
-            } else if (normalized === 'categoryPicking') {
+            } else if (incoming === 'categoryPicking') {
               try {
                 playSound('turnTransition');
               } catch {}
             }
           }
         },
-        (err) => {
-          console.error('Firebase listener error:', err);
+        (error) => {
+          console.error('Firebase listener error:', error);
         }
       );
 
@@ -408,18 +396,15 @@ export default function Overshare() {
         unsubscribeRef.current();
         unsubscribeRef.current = null;
       }
-      if (audioCtxRef.current) {
-        try {
-          audioCtxRef.current.close();
-        } catch {}
-        audioCtxRef.current = null;
-      }
+      try {
+        if (audioCtxRef.current?.close) audioCtxRef.current.close();
+      } catch {}
     };
   }, []);
 
-  /* ===========================
-     Handlers: Survey + Session
-     =========================== */
+  /* =========================
+     Handlers: Survey & Session
+  ========================= */
   const handleSurveySubmit = () => {
     if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
       try {
@@ -439,8 +424,8 @@ export default function Overshare() {
       joinedAt: new Date().toISOString()
     };
 
-    const success = await createFirebaseSession(code, hostPlayer);
-    if (!success) {
+    const ok = await createFirebaseSession(code, hostPlayer);
+    if (!ok) {
       alert('Failed to create session. Please try again.');
       return;
     }
@@ -452,7 +437,6 @@ export default function Overshare() {
     try {
       playSound('success');
     } catch {}
-
     listenToSession(code);
   };
 
@@ -466,10 +450,9 @@ export default function Overshare() {
       alert('Session not found. Please check the code and try again.');
       return;
     }
+    const data = sessionSnap.data() || {};
 
-    const sessionData = sessionSnap.data() || {};
-    const alreadyIn = (sessionData.players || []).some((p) => p && p.name === playerName);
-
+    const alreadyIn = (data.players || []).some((p) => p?.name === playerName);
     if (!alreadyIn) {
       const newPlayer = {
         id: Date.now().toString(),
@@ -480,18 +463,15 @@ export default function Overshare() {
       };
       try {
         await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
-      } catch (e) {
-        const freshSnap = await getDoc(sessionRef);
-        if (freshSnap.exists()) {
-          const fresh = freshSnap.data() || {};
-          const updated = [...(fresh.players || []), newPlayer];
-          await updateDoc(sessionRef, { players: updated });
-        }
+      } catch {
+        const fresh = (await getDoc(sessionRef)).data() || {};
+        const updated = [...(fresh.players || []), newPlayer];
+        await updateDoc(sessionRef, { players: updated });
       }
     }
 
-    setPlayers([...(sessionData.players || [])]);
-    setSelectedCategories([...(sessionData.selectedCategories || [])]);
+    setPlayers([...(data.players || [])]);
+    setSelectedCategories([...(data.selectedCategories || [])]);
     setSessionCode(code);
 
     listenToSession(code);
@@ -501,30 +481,29 @@ export default function Overshare() {
     } catch {}
   };
 
-  /* ===========================
-     Handlers: Relationship + Voting
-     =========================== */
+  /* =========================
+     Handlers: Relationship Survey & Voting
+  ========================= */
   const handleRelationshipSurveySubmit = async () => {
     try {
       const sessionRef = doc(db, 'sessions', sessionCode);
       const sessionSnap = await getDoc(sessionRef);
       if (!sessionSnap.exists()) return;
 
-      const sessionData = sessionSnap.data() || {};
-      const currentPlayers = sessionData.players || [];
-      const updatedPlayers = currentPlayers.map((p) =>
-        p && p.name === playerName ? { ...p, relationshipAnswers } : p
+      const data = sessionSnap.data() || {};
+      const updatedPlayers = (data.players || []).map((p) =>
+        p?.name === playerName ? { ...p, relationshipAnswers } : p
       );
 
       await updateDoc(sessionRef, { players: updatedPlayers });
 
-      const allCompleted = updatedPlayers.every((p) => p && p.relationshipAnswers);
+      const allCompleted = updatedPlayers.every((p) => p?.relationshipAnswers);
       if (allCompleted) {
-        const topCategories = sessionData.selectedCategories || [];
+        const top = data.selectedCategories || [];
         await updateDoc(sessionRef, {
           gameState: 'categoryPicking',
           currentTurnIndex: 0,
-          availableCategories: topCategories,
+          availableCategories: top,
           usedCategories: [],
           turnHistory: []
         });
@@ -535,8 +514,8 @@ export default function Overshare() {
       } else {
         setGameState('waitingForOthers');
       }
-    } catch (error) {
-      console.error('Error updating player data:', error);
+    } catch (err) {
+      console.error('Error updating player data:', err);
     }
   };
 
@@ -546,36 +525,36 @@ export default function Overshare() {
       const sessionSnap = await getDoc(sessionRef);
       if (!sessionSnap.exists()) return;
 
-      const sessionData = sessionSnap.data() || {};
-      const currentVotes = { ...(sessionData.categoryVotes || {}) };
-      currentVotes[playerName] = selectedCats || [];
+      const data = sessionSnap.data() || {};
+      const currentVotes = { ...(data.categoryVotes || {}) };
+      currentVotes[playerName] = selectedCats;
 
       await updateDoc(sessionRef, { categoryVotes: currentVotes });
 
-      setMyVotedCategories(selectedCats || []);
+      setMyVotedCategories(selectedCats);
       setHasVotedCategories(true);
       try {
         playSound('success');
       } catch {}
 
-      const plist = sessionData.players || [];
-      if (plist.length > 1) {
-        const allPlayersVoted = plist.every(
-          (player) => player && currentVotes[player.name] && currentVotes[player.name].length > 0
+      const list = data.players || [];
+      if (list.length > 1) {
+        const allPlayersVoted = list.every(
+          (p) => (currentVotes[p?.name] || []).length > 0
         );
         if (allPlayersVoted) {
           await updateDoc(sessionRef, { gameState: 'waitingForHost' });
           setGameState('waitingForHost');
         }
       }
-    } catch (error) {
-      console.error('Error submitting category votes:', error);
+    } catch (err) {
+      console.error('Error submitting category votes:', err);
     }
   };
 
-  /* ===========================
-     Handlers: Pick / Skip / Next
-     =========================== */
+  /* =========================
+     Handlers: Picking / Playing Flow
+  ========================= */
   const handleCategoryPicked = async (category) => {
     try {
       const currentPlayer = players[currentTurnIndex] || players[0];
@@ -588,35 +567,32 @@ export default function Overshare() {
         category
       );
 
-      const newUsedCategories = [...usedCategories, category];
-      const newAvailableCategories = (availableCategories || []).filter((c) => c !== category);
-      const newTurnHistory = [
-        ...turnHistory,
-        { player: currentPlayer.name, category, question }
-      ];
+      const newUsed = [...usedCategories, category];
+      const newAvail = (availableCategories || []).filter((c) => c !== category);
+      const newHistory = [...turnHistory, { player: currentPlayer.name, category, question }];
 
       await updateDoc(doc(db, 'sessions', sessionCode), {
         currentQuestion: question,
         currentCategory: category,
         gameState: 'playing',
-        usedCategories: newUsedCategories,
-        availableCategories: newAvailableCategories,
-        turnHistory: newTurnHistory,
+        usedCategories: newUsed,
+        availableCategories: newAvail,
+        turnHistory: newHistory,
         currentQuestionAsker: currentPlayer.name
       });
 
       setCurrentQuestion(question);
       setCurrentCategory(category);
       setCurrentQuestionAsker(currentPlayer.name);
-      setUsedCategories(newUsedCategories);
-      setAvailableCategories(newAvailableCategories);
-      setTurnHistory(newTurnHistory);
+      setUsedCategories(newUsed);
+      setAvailableCategories(newAvail);
+      setTurnHistory(newHistory);
       setGameState('playing');
       try {
         playSound('success');
       } catch {}
-    } catch (error) {
-      console.error('Error in handleCategoryPicked:', error);
+    } catch (err) {
+      console.error('Error in handleCategoryPicked:', err);
     }
   };
 
@@ -638,8 +614,8 @@ export default function Overshare() {
       try {
         playSound('click');
       } catch {}
-    } catch (error) {
-      console.error('Error skipping question:', error);
+    } catch (err) {
+      console.error('Error skipping question:', err);
     }
   };
 
@@ -650,9 +626,9 @@ export default function Overshare() {
 
       const nextTurnIndex = (currentTurnIndex + 1) % count;
 
-      let newAvailable = availableCategories || [];
-      let newUsed = usedCategories || [];
-      if (newAvailable.length === 0) {
+      let newAvailable = availableCategories;
+      let newUsed = usedCategories;
+      if ((availableCategories || []).length === 0) {
         newAvailable = [...(selectedCategories || [])];
         newUsed = [];
       }
@@ -678,14 +654,14 @@ export default function Overshare() {
       try {
         playSound('turnTransition');
       } catch {}
-    } catch (error) {
-      console.error('Error in handleNextQuestion:', error);
+    } catch (err) {
+      console.error('Error in handleNextQuestion:', err);
     }
   };
 
-  /* ===========================
-     UI: Reusable
-     =========================== */
+  /* =========================
+     UI: Top Bar / Modals / Partials
+  ========================= */
   const TopBar = () => (
     <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
       <button
@@ -763,7 +739,7 @@ export default function Overshare() {
   const NotificationToast = () => {
     if (!notification) return null;
     return (
-      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-50 animate-bounce">
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-50 animate-bounce">
         <div className="flex items-center space-x-2">
           <span className="text-2xl">{notification.emoji}</span>
           <span className="font-medium text-gray-800">{notification.message}</span>
@@ -776,19 +752,12 @@ export default function Overshare() {
     <div className={`w-full h-2 bg-gray-200 rounded-full ${className}`}>
       <div
         className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-300"
-        style={{ width: `${total ? (current / total) * 100 : 0}%` }}
+        style={{ width: `${total ? Math.min(100, Math.max(0, (current / total) * 100)) : 0}%` }}
       />
     </div>
   );
 
-  const CategoryCard = ({
-    categoryKey,
-    category,
-    isSelected,
-    isRecommended,
-    onClick,
-    disabled = false
-  }) => {
+  const CategoryCard = ({ categoryKey, category, isSelected, isRecommended, onClick, disabled = false }) => {
     const IconComponent =
       category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
     return (
@@ -823,17 +792,17 @@ export default function Overshare() {
     );
   };
 
-  const PlayerList = ({ players, title, showProgress = false, currentPlayerName = null }) => (
+  const PlayerList = ({ players: list, title, showProgress = false, currentPlayerName = null }) => (
     <div className="mb-6">
       <h3 className="text-lg font-semibold text-gray-800 mb-3">
-        {title} ({players.length})
+        {title} ({(list || []).length})
       </h3>
       <div className="space-y-2">
-        {players.map((player, index) => (
+        {(list || []).map((player, index) => (
           <div
-            key={`${player?.name || 'player'}-${index}`}
+            key={`${player?.id || 'p'}-${index}`}
             className={`flex items-center justify-between p-3 bg-gray-50 rounded-xl ${
-              currentPlayerName === (player && player.name) ? 'ring-2 ring-purple-500 bg-purple-50' : ''
+              currentPlayerName === player?.name ? 'ring-2 ring-purple-500 bg-purple-50' : ''
             }`}
           >
             <span className="font-medium">{player?.name || 'Player'}</span>
@@ -857,13 +826,13 @@ export default function Overshare() {
 
   const LoadingSpinner = ({ size = 'w-8 h-8' }) => (
     <div className="inline-flex items-center justify-center">
-      <div className={`${size} border-4 border-purple-500 border-t-transparent rounded-full animate-spin`}></div>
+      <div className={`${size} border-4 border-purple-500 border-t-transparent rounded-full animate-spin`} />
     </div>
   );
 
-  /* ===========================
-     Screens: Game States
-     =========================== */
+  /* =========================
+     Screens: Welcome
+  ========================= */
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -907,6 +876,9 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Survey
+  ========================= */
   if (gameState === 'survey') {
     const currentQuestionIndex = Object.keys(surveyAnswers).length;
     const currentSurveyQuestion = initialSurveyQuestions[currentQuestionIndex];
@@ -923,7 +895,6 @@ export default function Overshare() {
               <h2 className="text-2xl font-bold text-gray-800 mb-2">Perfect, {playerName}!</h2>
               <p className="text-gray-600">We'll use this to create personalized questions for your group.</p>
             </div>
-
             <button
               onClick={() => {
                 try {
@@ -977,6 +948,9 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Create or Join
+  ========================= */
   if (gameState === 'createOrJoin') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1001,9 +975,9 @@ export default function Overshare() {
             </button>
 
             <div className="flex items-center my-4">
-              <div className="flex-1 h-px bg-gray-300"></div>
+              <div className="flex-1 h-px bg-gray-300" />
               <span className="px-4 text-gray-500 text-sm">or</span>
-              <div className="flex-1 h-px bg-gray-300"></div>
+              <div className="flex-1 h-px bg-gray-300" />
             </div>
 
             <div className="space-y-3">
@@ -1033,8 +1007,11 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Waiting Room
+  ========================= */
   if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find((p) => p && p.name === playerName);
+    const isNewPlayer = !players.find((p) => p?.name === playerName);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1133,6 +1110,9 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Category Voting
+  ========================= */
   if (gameState === 'categoryVoting') {
     const recommended = recommendCategories(players, relationshipAnswers);
     const allVotes = Object.values(categoryVotes || {});
@@ -1168,10 +1148,10 @@ export default function Overshare() {
           {!hasVotedCategories ? (
             <>
               <div className="space-y-3 mb-6">
-                {Object.entries(questionCategories).map(([key, category]) => {
-                  const isRecommended = recommended.includes(key);
-                  const isSelected = selectedCategories.includes(key);
-                  const disabled = !isSelected && selectedCategories.length >= 3;
+                {Object.entries(questionCategories || {}).map(([key, category]) => {
+                  const isRecommended = (recommended || []).includes(key);
+                  const isSelected = (selectedCategories || []).includes(key);
+                  const disabled = !isSelected && (selectedCategories || []).length >= 3;
                   return (
                     <CategoryCard
                       key={key}
@@ -1184,11 +1164,12 @@ export default function Overshare() {
                         try {
                           playSound('click');
                         } catch {}
-                        if (isSelected) {
-                          setSelectedCategories((prev) => prev.filter((c) => c !== key));
-                        } else if ((selectedCategories || []).length < 3) {
-                          setSelectedCategories((prev) => [...prev, key]);
-                        }
+                        setSelectedCategories((prev) => {
+                          const has = prev.includes(key);
+                          if (has) return prev.filter((c) => c !== key);
+                          if (prev.length >= 3) return prev;
+                          return [...prev, key];
+                        });
                       }}
                     />
                   );
@@ -1211,9 +1192,7 @@ export default function Overshare() {
                   {(myVotedCategories || []).map((categoryKey) => {
                     const category = questionCategories[categoryKey];
                     const IconComponent =
-                      category && iconMap[category.icon]
-                        ? iconMap[category.icon]
-                        : MessageCircle;
+                      category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                     return (
                       <div
                         key={categoryKey}
@@ -1274,9 +1253,7 @@ export default function Overshare() {
                 <div className="text-center">
                   <p className="text-gray-600">All players have voted!</p>
                   {!isHost && (
-                    <p className="text-sm text-gray-500 mt-2">
-                      Waiting for host to start the game...
-                    </p>
+                    <p className="text-sm text-gray-500 mt-2">Waiting for host to start the game...</p>
                   )}
                 </div>
               )}
@@ -1287,6 +1264,9 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Waiting For Host
+  ========================= */
   if (gameState === 'waitingForHost') {
     const voteResults = {};
     Object.values(categoryVotes || {}).forEach((votes) => {
@@ -1294,7 +1274,6 @@ export default function Overshare() {
         voteResults[cat] = (voteResults[cat] || 0) + 1;
       });
     });
-
     const topCategories = calculateTopCategories(categoryVotes || {});
 
     return (
@@ -1316,7 +1295,7 @@ export default function Overshare() {
                   const category = questionCategories[categoryKey];
                   const IconComponent =
                     category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-                  const isSelected = topCategories.includes(categoryKey);
+                  const isSelected = (topCategories || []).includes(categoryKey);
                   return (
                     <div
                       key={categoryKey}
@@ -1332,9 +1311,7 @@ export default function Overshare() {
                         >
                           <IconComponent className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-medium text-gray-800">
-                          {category?.name || categoryKey}
-                        </span>
+                        <span className="font-medium text-gray-800">{category?.name || categoryKey}</span>
                       </div>
                       <span className="text-sm text-gray-600">{voteCount} votes</span>
                     </div>
@@ -1362,7 +1339,7 @@ export default function Overshare() {
             </button>
           ) : (
             <p className="text-gray-500">
-              Waiting for {(players.find((p) => p && p.isHost) || {}).name || 'host'} to continue...
+              Waiting for {players.find((p) => p?.isHost)?.name || 'host'} to continue...
             </p>
           )}
         </div>
@@ -1370,9 +1347,12 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Relationship Survey
+  ========================= */
   if (gameState === 'relationshipSurvey') {
     const currentPlayerIndex = Object.keys(relationshipAnswers || {}).length;
-    const otherPlayers = (players || []).filter((p) => p && p.name !== playerName);
+    const otherPlayers = (players || []).filter((p) => p?.name !== playerName);
     const currentPlayer = otherPlayers[currentPlayerIndex];
 
     if (currentPlayerIndex >= otherPlayers.length) {
@@ -1387,7 +1367,6 @@ export default function Overshare() {
               <h2 className="text-2xl font-bold text-gray-800 mb-2">Great!</h2>
               <p className="text-gray-600">Now let's choose what types of questions you want to explore.</p>
             </div>
-
             <button
               onClick={() => {
                 try {
@@ -1431,10 +1410,7 @@ export default function Overshare() {
                   try {
                     playSound('click');
                   } catch {}
-                  setRelationshipAnswers((prev) => ({
-                    ...prev,
-                    [currentPlayer.name]: option
-                  }));
+                  setRelationshipAnswers((prev) => ({ ...prev, [currentPlayer.name]: option }));
                 }}
                 className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
               >
@@ -1447,9 +1423,14 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Waiting For Others
+  ========================= */
   if (gameState === 'waitingForOthers') {
-    const playersWithRelationships = (players || []).filter((p) => p && p.relationshipAnswers);
-    const waitingFor = (players || []).filter((p) => p && !p.relationshipAnswers).map((p) => p.name);
+    const playersWithRelationships = (players || []).filter((p) => p?.relationshipAnswers);
+    const waitingFor = (players || [])
+      .filter((p) => !p?.relationshipAnswers)
+      .map((p) => p?.name);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1481,9 +1462,12 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Category Picking
+  ========================= */
   if (gameState === 'categoryPicking') {
     const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer && currentPlayer.name === playerName;
+    const isMyTurn = currentPlayer?.name === playerName;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1500,9 +1484,7 @@ export default function Overshare() {
               </>
             ) : (
               <>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                  {currentPlayer?.name}'s Turn
-                </h2>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">{currentPlayer?.name}'s Turn</h2>
                 <p className="text-gray-600">{currentPlayer?.name} is choosing a category...</p>
               </>
             )}
@@ -1570,13 +1552,17 @@ export default function Overshare() {
     );
   }
 
+  /* =========================
+     Screens: Playing
+  ========================= */
   if (gameState === 'playing') {
-    const categoryData = questionCategories[currentCategory];
+    const currentCategoryData = questionCategories[currentCategory];
     const IconComponent =
-      categoryData && iconMap[categoryData.icon] ? iconMap[categoryData.icon] : MessageCircle;
-
+      currentCategoryData && iconMap[currentCategoryData.icon]
+        ? iconMap[currentCategoryData.icon]
+        : MessageCircle;
     const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer && currentPlayer.name === playerName;
+    const isMyTurn = currentPlayer?.name === playerName;
     const canSkip = skipsUsedThisTurn < maxSkipsPerTurn;
 
     const round = players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1;
@@ -1593,21 +1579,19 @@ export default function Overshare() {
               <IconComponent className="w-6 h-6 text-white" />
             </div>
 
-            {categoryData && (
+            {currentCategoryData && (
               <div className="mb-4">
                 <span
-                  className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${
-                    categoryData.color
-                  } text-white text-sm`}
+                  className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}
                 >
                   <IconComponent className="w-3 h-3" />
-                  <span>{categoryData.name}</span>
+                  <span>{currentCategoryData.name}</span>
                 </span>
               </div>
             )}
 
             <h2 className="text-lg font-semibold text-gray-800 mb-2">
-              {(currentPlayer && currentPlayer.name) || 'Player'}'s Question
+              {currentPlayer?.name || 'Player'}'s Question
             </h2>
             <p className="text-sm text-gray-500 mb-4">
               Round {round} • Turn {turn} of {players.length || 1}
@@ -1640,16 +1624,14 @@ export default function Overshare() {
                   onClick={handleNextQuestion}
                   className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
                 >
-                  Pass to{' '}
-                  {players.length ? players[(currentTurnIndex + 1) % players.length]?.name : '—'}
+                  Pass to {players.length ? players[(currentTurnIndex + 1) % players.length]?.name : '—'}
                 </button>
               </>
             ) : (
               <div className="text-center">
                 <LoadingSpinner />
                 <p className="text-gray-600 mt-4">
-                  Waiting for {(currentPlayer && currentPlayer.name) || 'player'} to finish their
-                  turn...
+                  Waiting for {currentPlayer?.name || 'player'} to finish their turn...
                 </p>
               </div>
             )}
@@ -1663,3 +1645,16 @@ export default function Overshare() {
               }}
               className="w-full bg-white border-2 border-gray-300 text-gray-600 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 transition-all"
             >
+              Back to Lobby
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Fallback
+  ========================= */
+  return null;
+}
