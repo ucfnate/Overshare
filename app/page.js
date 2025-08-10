@@ -1,7 +1,23 @@
 'use client';
 
+/* ===========================
+   Imports
+   =========================== */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame, Volume2, VolumeX, SkipForward, HelpCircle, X } from 'lucide-react';
+import {
+  Users,
+  MessageCircle,
+  Heart,
+  Sparkles,
+  Lightbulb,
+  Target,
+  Flame,
+  Volume2,
+  VolumeX,
+  SkipForward,
+  HelpCircle,
+  X
+} from 'lucide-react';
 import { db } from '../lib/firebase';
 import {
   doc,
@@ -14,11 +30,18 @@ import {
 } from 'firebase/firestore';
 import { questionCategories, getRandomQuestion } from '../lib/questionCategories';
 
+/* ===========================
+   Main Component
+   =========================== */
 export default function Overshare() {
+  /* ===========================
+     State: Game + UI
+     =========================== */
   const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
+
   const [players, setPlayers] = useState([]);
   const [surveyAnswers, setSurveyAnswers] = useState({});
   const [relationshipAnswers, setRelationshipAnswers] = useState({});
@@ -33,44 +56,75 @@ export default function Overshare() {
   const [categoryVotes, setCategoryVotes] = useState({});
   const [myVotedCategories, setMyVotedCategories] = useState([]);
   const [hasVotedCategories, setHasVotedCategories] = useState(false);
+
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [skipsUsedThisTurn, setSkipsUsedThisTurn] = useState(0);
   const [maxSkipsPerTurn] = useState(1);
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
 
+  /* ===========================
+     Refs
+     =========================== */
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
+  const audioCtxRef = useRef(null);
 
-  const iconMap = useMemo(() => ({
-    Sparkles,
-    Heart,
-    Lightbulb,
-    Target,
-    Flame,
-    MessageCircle
-  }), []);
+  /* ===========================
+     Icons + Static Config
+     =========================== */
+  const iconMap = useMemo(
+    () => ({
+      Sparkles,
+      Heart,
+      Lightbulb,
+      Target,
+      Flame,
+      MessageCircle
+    }),
+    []
+  );
 
   const initialSurveyQuestions = [
     {
       id: 'personality',
       question: 'How would you describe yourself in social settings?',
-      options: ['Outgoing & Love being center of attention', 'Friendly but prefer smaller groups', 'Thoughtful listener who observes first', 'Quiet but warm up over time']
+      options: [
+        'Outgoing & Love being center of attention',
+        'Friendly but prefer smaller groups',
+        'Thoughtful listener who observes first',
+        'Quiet but warm up over time'
+      ]
     },
     {
       id: 'comfort_level',
       question: 'In conversations, you prefer:',
-      options: ['Light, fun topics that make everyone laugh', 'Mix of light and meaningful discussions', 'Deep, personal conversations', 'Thought-provoking questions about life']
+      options: [
+        'Light, fun topics that make everyone laugh',
+        'Mix of light and meaningful discussions',
+        'Deep, personal conversations',
+        'Thought-provoking questions about life'
+      ]
     },
     {
       id: 'sharing_style',
       question: 'When sharing personal things, you:',
-      options: ['Share openly and easily', 'Share when others share first', 'Prefer to listen more than share', 'Share deeply with close people only']
+      options: [
+        'Share openly and easily',
+        'Share when others share first',
+        'Prefer to listen more than share',
+        'Share deeply with close people only'
+      ]
     },
     {
       id: 'group_energy',
       question: 'You contribute best to group conversations when:',
-      options: ['Everyone is laughing and having fun', 'There\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
+      options: [
+        'Everyone is laughing and having fun',
+        "There's a good mix of personalities",
+        'People are being real and authentic',
+        'The conversation has depth and meaning'
+      ]
     }
   ];
 
@@ -80,17 +134,22 @@ export default function Overshare() {
     'Friend (hang out regularly)',
     'Family member',
     'Coworker/colleague',
-    'Acquaintance (don\'t know well)',
+    "Acquaintance (don't know well)",
     'Just met/new friend'
   ];
 
-  let audioCtx;
+  /* ===========================
+     Audio (no eval / CSP-safe)
+     =========================== */
   const getAudio = () => {
     if (!audioEnabled) return null;
     try {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      return audioCtx;
-    } catch (_) {
+      if (!audioCtxRef.current) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (Ctx) audioCtxRef.current = new Ctx();
+      }
+      return audioCtxRef.current;
+    } catch {
       return null;
     }
   };
@@ -110,70 +169,87 @@ export default function Overshare() {
     };
 
     const sounds = {
-      click: () => makeTone((osc, gain, t0) => {
-        osc.frequency.setValueAtTime(800, t0);
-        osc.frequency.exponentialRampToValueAtTime(600, t0 + 0.1);
-        gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.1);
-        osc.stop(t0 + 0.1);
-      }),
-      success: () => makeTone((osc, gain, t0) => {
-        osc.frequency.setValueAtTime(523, t0);
-        osc.frequency.setValueAtTime(659, t0 + 0.1);
-        osc.frequency.setValueAtTime(784, t0 + 0.2);
-        gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
-        osc.stop(t0 + 0.3);
-      }),
-      turnTransition: () => makeTone((osc, gain, t0) => {
-        osc.frequency.setValueAtTime(440, t0);
-        osc.frequency.setValueAtTime(554, t0 + 0.15);
-        gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
-        osc.stop(t0 + 0.3);
-      })
+      click: () =>
+        makeTone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(800, t0);
+          osc.frequency.exponentialRampToValueAtTime(600, t0 + 0.1);
+          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.1);
+          osc.stop(t0 + 0.1);
+        }),
+      success: () =>
+        makeTone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(523, t0);
+          osc.frequency.setValueAtTime(659, t0 + 0.1);
+          osc.frequency.setValueAtTime(784, t0 + 0.2);
+          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
+          osc.stop(t0 + 0.3);
+        }),
+      turnTransition: () =>
+        makeTone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(440, t0);
+          osc.frequency.setValueAtTime(554, t0 + 0.15);
+          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
+          osc.stop(t0 + 0.3);
+        })
     };
 
     if (sounds[type]) sounds[type]();
   };
 
+  /* ===========================
+     Notifications
+     =========================== */
   const showNotification = (message, emoji = '🎉') => {
     setNotification({ message, emoji });
-    setTimeout(() => setNotification(null), 3000);
+    window.setTimeout(() => setNotification(null), 3000);
   };
 
+  /* ===========================
+     Algorithms
+     =========================== */
   const calculateGroupIntimacy = (relationships) => {
-    if (!relationships || Object.keys(relationships).length === 0) return 2;
+    const rel = relationships || {};
+    const keys = Object.keys(rel);
+    if (keys.length === 0) return 2;
+
     const intimacyMap = {
       'Romantic partner/spouse': 5,
       'Close friend (know each other well)': 4,
       'Friend (hang out regularly)': 3,
       'Family member': 4,
       'Coworker/colleague': 2,
-      'Acquaintance (don\'t know well)': 1,
+      "Acquaintance (don't know well)": 1,
       'Just met/new friend': 1
     };
-    const scores = Object.values(relationships).map((rel) => intimacyMap[rel] || 2);
+
+    const scores = keys.map((k) => intimacyMap[rel[k]] || 2);
     return scores.reduce((a, b) => a + b, 0) / scores.length;
   };
 
-  const getGroupComfortLevel = (playersArr) => {
-    if (!playersArr || playersArr.length === 0) return 2;
+  const getGroupComfortLevel = (playersList) => {
+    const list = playersList || [];
+    if (list.length === 0) return 2;
+
     const comfortMap = {
       'Light, fun topics that make everyone laugh': 2,
       'Mix of light and meaningful discussions': 3,
       'Deep, personal conversations': 4,
       'Thought-provoking questions about life': 4
     };
-    const scores = playersArr
-      .filter((p) => p.surveyAnswers?.comfort_level)
+
+    const scores = list
+      .filter((p) => p && p.surveyAnswers && p.surveyAnswers.comfort_level)
       .map((p) => comfortMap[p.surveyAnswers.comfort_level] || 2);
+
     if (scores.length === 0) return 2;
     return scores.reduce((a, b) => a + b, 0) / scores.length;
   };
 
-  const recommendCategories = (playersArr, relationships) => {
+  const recommendCategories = (playersList, relationships) => {
     const intimacyScore = calculateGroupIntimacy(relationships);
-    const comfortLevel = getGroupComfortLevel(playersArr);
-    const groupSize = playersArr.length;
-    let recommended = [];
+    const comfortLevel = getGroupComfortLevel(playersList);
+    const groupSize = (playersList || []).length;
+    const recommended = [];
 
     if (groupSize > 3 || intimacyScore < 3) recommended.push('icebreakers');
     if (groupSize > 2) recommended.push('creative');
@@ -184,34 +260,44 @@ export default function Overshare() {
     return recommended;
   };
 
-  const generatePersonalizedQuestion = (playersArr, surveyData, relationships, forceCategory = null) => {
-    let category = forceCategory;
+  const generatePersonalizedQuestion = (playersList, surveyData, relationships, forceCategory = null) => {
+    let category = forceCategory || null;
+
     if (!category) {
-      if (selectedCategories.length === 0) {
-        const recommended = recommendCategories(playersArr, relationships);
-        category = recommended[Math.floor(Math.random() * recommended.length)] || 'icebreakers';
+      if ((selectedCategories || []).length === 0) {
+        const rec = recommendCategories(playersList, relationships);
+        category = rec[Math.floor(Math.random() * rec.length)] || 'icebreakers';
       } else {
-        category = selectedCategories[Math.floor(Math.random() * selectedCategories.length)];
+        const pool = selectedCategories || [];
+        category = pool[Math.floor(Math.random() * pool.length)];
       }
     }
+
     const question = getRandomQuestion(category);
     setCurrentCategory(category);
     return question;
   };
 
   const calculateTopCategories = (votes) => {
+    const safeVotes = votes || {};
     const voteCount = {};
-    Object.values(votes || {}).forEach((playerVotes) => {
-      (playerVotes || []).forEach((category) => {
-        voteCount[category] = (voteCount[category] || 0) + 1;
+    Object.values(safeVotes).forEach((arr) => {
+      (arr || []).forEach((cat) => {
+        voteCount[cat] = (voteCount[cat] || 0) + 1;
       });
     });
-    const sortedCategories = Object.entries(voteCount)
+
+    const sorted = Object.entries(voteCount)
       .sort((a, b) => b[1] - a[1])
-      .map(([category]) => category);
-    return sortedCategories.slice(0, Math.min(4, Math.max(3, sortedCategories.length)));
+      .map(([k]) => k);
+
+    const limit = Math.min(4, Math.max(3, sorted.length));
+    return sorted.slice(0, limit);
   };
 
+  /* ===========================
+     Firestore: Create + Listen
+     =========================== */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
@@ -220,7 +306,7 @@ export default function Overshare() {
         currentQuestion: '',
         currentCategory: '',
         currentQuestionAsker: '',
-        gameState: 'waiting',
+        gameState: 'waitingRoom', // was 'waiting' causing black screen
         selectedCategories: [],
         currentTurnIndex: 0,
         availableCategories: [],
@@ -230,69 +316,91 @@ export default function Overshare() {
         createdAt: serverTimestamp()
       });
       return true;
-    } catch (error) {
-      console.error('Error creating session:', error);
+    } catch (err) {
+      console.error('Error creating session:', err);
       return false;
     }
   };
 
-  const listenToSession = useCallback((code) => {
-    if (!code) return () => {};
-    const sessionRef = doc(db, 'sessions', code);
+  const listenToSession = useCallback(
+    (code) => {
+      if (!code) return () => {};
 
-    if (unsubscribeRef.current) {
-      unsubscribeRef.current();
-      unsubscribeRef.current = null;
-    }
+      const sessionRef = doc(db, 'sessions', code);
 
-    let previousPlayerCount = 0;
-    const unsubscribe = onSnapshot(
-      sessionRef,
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-
-        const newCount = (data.players || []).length;
-        if (previousPlayerCount > 0 && newCount > previousPlayerCount) {
-          const newPlayer = (data.players || [])[newCount - 1];
-          if (newPlayer && newPlayer.name !== playerName) {
-            showNotification(`${newPlayer.name} joined the game!`, '👋');
-            try { playSound('success'); } catch {}
-          }
-        }
-        previousPlayerCount = newCount;
-
-        setPlayers([...(data.players || [])]);
-        setCurrentQuestion(data.currentQuestion || '');
-        setCurrentCategory(data.currentCategory || '');
-        setCurrentQuestionAsker(data.currentQuestionAsker || '');
-        setSelectedCategories([...(data.selectedCategories || [])]);
-        setCurrentTurnIndex(typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0);
-        setAvailableCategories([...(data.availableCategories || [])]);
-        setUsedCategories([...(data.usedCategories || [])]);
-        setTurnHistory([...(data.turnHistory || [])]);
-        setCategoryVotes(data.categoryVotes || {});
-
-        const incomingTurn = typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
-        if (incomingTurn !== prevTurnIndexRef.current) {
-          setSkipsUsedThisTurn(0);
-          prevTurnIndexRef.current = incomingTurn;
-        }
-
-        if (data.gameState !== gameState) {
-          setGameState(data.gameState);
-          if (data.gameState === 'playing') try { playSound('success'); } catch {}
-          else if (data.gameState === 'categoryPicking') try { playSound('turnTransition'); } catch {}
-        }
-      },
-      (error) => {
-        console.error('Firebase listener error:', error);
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
-    );
 
-    unsubscribeRef.current = unsubscribe;
-    return unsubscribe;
-  }, [db, playerName, gameState]);
+      let previousPlayerCount = 0;
+
+      const unsubscribe = onSnapshot(
+        sessionRef,
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data() || {};
+
+          // players
+          const incomingPlayers = Array.isArray(data.players) ? data.players : [];
+          const newCount = incomingPlayers.length;
+          if (previousPlayerCount > 0 && newCount > previousPlayerCount) {
+            const newPlayer = incomingPlayers[newCount - 1];
+            if (newPlayer && newPlayer.name !== playerName) {
+              showNotification(`${newPlayer.name} joined the game!`, '👋');
+              try {
+                playSound('success');
+              } catch {}
+            }
+          }
+          previousPlayerCount = newCount;
+          setPlayers([...incomingPlayers]);
+
+          // simple fields
+          setCurrentQuestion(data.currentQuestion || '');
+          setCurrentCategory(data.currentCategory || '');
+          setCurrentQuestionAsker(data.currentQuestionAsker || '');
+          setSelectedCategories([...(data.selectedCategories || [])]);
+          setCurrentTurnIndex(typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0);
+          setAvailableCategories([...(data.availableCategories || [])]);
+          setUsedCategories([...(data.usedCategories || [])]);
+          setTurnHistory([...(data.turnHistory || [])]);
+          setCategoryVotes(data.categoryVotes || {});
+
+          // reset skip on authoritative turn change
+          const incomingTurn = typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
+          if (incomingTurn !== prevTurnIndexRef.current) {
+            setSkipsUsedThisTurn(0);
+            prevTurnIndexRef.current = incomingTurn;
+          }
+
+          // normalize legacy 'waiting' to 'waitingRoom'
+          const incomingRaw = data.gameState || 'waitingRoom';
+          const normalized = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
+
+          if (normalized !== gameState) {
+            setGameState(normalized);
+            if (normalized === 'playing') {
+              try {
+                playSound('success');
+              } catch {}
+            } else if (normalized === 'categoryPicking') {
+              try {
+                playSound('turnTransition');
+              } catch {}
+            }
+          }
+        },
+        (err) => {
+          console.error('Firebase listener error:', err);
+        }
+      );
+
+      unsubscribeRef.current = unsubscribe;
+      return unsubscribe;
+    },
+    [db, playerName, gameState]
+  );
 
   useEffect(() => {
     return () => {
@@ -300,12 +408,23 @@ export default function Overshare() {
         unsubscribeRef.current();
         unsubscribeRef.current = null;
       }
+      if (audioCtxRef.current) {
+        try {
+          audioCtxRef.current.close();
+        } catch {}
+        audioCtxRef.current = null;
+      }
     };
   }, []);
 
+  /* ===========================
+     Handlers: Survey + Session
+     =========================== */
   const handleSurveySubmit = () => {
     if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
-      try { playSound('success'); } catch {}
+      try {
+        playSound('success');
+      } catch {}
       setGameState('createOrJoin');
     }
   };
@@ -321,13 +440,18 @@ export default function Overshare() {
     };
 
     const success = await createFirebaseSession(code, hostPlayer);
-    if (!success) return alert('Failed to create session. Please try again.');
+    if (!success) {
+      alert('Failed to create session. Please try again.');
+      return;
+    }
 
     setSessionCode(code);
     setIsHost(true);
     setPlayers([hostPlayer]);
     setGameState('waitingRoom');
-    try { playSound('success'); } catch {}
+    try {
+      playSound('success');
+    } catch {}
 
     listenToSession(code);
   };
@@ -338,12 +462,14 @@ export default function Overshare() {
 
     const sessionRef = doc(db, 'sessions', code);
     const sessionSnap = await getDoc(sessionRef);
+    if (!sessionSnap.exists()) {
+      alert('Session not found. Please check the code and try again.');
+      return;
+    }
 
-    if (!sessionSnap.exists()) return alert('Session not found. Please check the code and try again.');
+    const sessionData = sessionSnap.data() || {};
+    const alreadyIn = (sessionData.players || []).some((p) => p && p.name === playerName);
 
-    const sessionData = sessionSnap.data();
-
-    const alreadyIn = (sessionData.players || []).some((p) => p.name === playerName);
     if (!alreadyIn) {
       const newPlayer = {
         id: Date.now().toString(),
@@ -355,11 +481,10 @@ export default function Overshare() {
       try {
         await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
       } catch (e) {
-        console.error('Failed to join via arrayUnion, falling back to read-modify-write', e);
         const freshSnap = await getDoc(sessionRef);
         if (freshSnap.exists()) {
-          const fresh = freshSnap.data();
-          const updated = [ ...(fresh.players || []), newPlayer ];
+          const fresh = freshSnap.data() || {};
+          const updated = [...(fresh.players || []), newPlayer];
           await updateDoc(sessionRef, { players: updated });
         }
       }
@@ -371,23 +496,29 @@ export default function Overshare() {
 
     listenToSession(code);
     setGameState('waitingRoom');
-    try { playSound('success'); } catch {}
+    try {
+      playSound('success');
+    } catch {}
   };
 
+  /* ===========================
+     Handlers: Relationship + Voting
+     =========================== */
   const handleRelationshipSurveySubmit = async () => {
     try {
       const sessionRef = doc(db, 'sessions', sessionCode);
       const sessionSnap = await getDoc(sessionRef);
       if (!sessionSnap.exists()) return;
 
-      const sessionData = sessionSnap.data();
-      const updatedPlayers = (sessionData.players || []).map((p) =>
-        p.name === playerName ? { ...p, relationshipAnswers } : p
+      const sessionData = sessionSnap.data() || {};
+      const currentPlayers = sessionData.players || [];
+      const updatedPlayers = currentPlayers.map((p) =>
+        p && p.name === playerName ? { ...p, relationshipAnswers } : p
       );
 
       await updateDoc(sessionRef, { players: updatedPlayers });
 
-      const allCompleted = updatedPlayers.every((p) => p.relationshipAnswers);
+      const allCompleted = updatedPlayers.every((p) => p && p.relationshipAnswers);
       if (allCompleted) {
         const topCategories = sessionData.selectedCategories || [];
         await updateDoc(sessionRef, {
@@ -398,7 +529,9 @@ export default function Overshare() {
           turnHistory: []
         });
         setGameState('categoryPicking');
-        try { playSound('success'); } catch {}
+        try {
+          playSound('success');
+        } catch {}
       } else {
         setGameState('waitingForOthers');
       }
@@ -413,19 +546,22 @@ export default function Overshare() {
       const sessionSnap = await getDoc(sessionRef);
       if (!sessionSnap.exists()) return;
 
-      const sessionData = sessionSnap.data();
-      const currentVotes = sessionData.categoryVotes || {};
-      currentVotes[playerName] = selectedCats;
+      const sessionData = sessionSnap.data() || {};
+      const currentVotes = { ...(sessionData.categoryVotes || {}) };
+      currentVotes[playerName] = selectedCats || [];
 
       await updateDoc(sessionRef, { categoryVotes: currentVotes });
 
-      setMyVotedCategories(selectedCats);
+      setMyVotedCategories(selectedCats || []);
       setHasVotedCategories(true);
-      try { playSound('success'); } catch {}
+      try {
+        playSound('success');
+      } catch {}
 
-      if ((sessionData.players || []).length > 1) {
-        const allPlayersVoted = (sessionData.players || []).every(
-          (player) => currentVotes[player.name] && currentVotes[player.name].length > 0
+      const plist = sessionData.players || [];
+      if (plist.length > 1) {
+        const allPlayersVoted = plist.every(
+          (player) => player && currentVotes[player.name] && currentVotes[player.name].length > 0
         );
         if (allPlayersVoted) {
           await updateDoc(sessionRef, { gameState: 'waitingForHost' });
@@ -437,15 +573,23 @@ export default function Overshare() {
     }
   };
 
+  /* ===========================
+     Handlers: Pick / Skip / Next
+     =========================== */
   const handleCategoryPicked = async (category) => {
     try {
       const currentPlayer = players[currentTurnIndex] || players[0];
       if (!currentPlayer) return;
 
-      const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, category);
+      const question = generatePersonalizedQuestion(
+        players,
+        surveyAnswers,
+        relationshipAnswers,
+        category
+      );
 
       const newUsedCategories = [...usedCategories, category];
-      const newAvailableCategories = availableCategories.filter((c) => c !== category);
+      const newAvailableCategories = (availableCategories || []).filter((c) => c !== category);
       const newTurnHistory = [
         ...turnHistory,
         { player: currentPlayer.name, category, question }
@@ -468,7 +612,9 @@ export default function Overshare() {
       setAvailableCategories(newAvailableCategories);
       setTurnHistory(newTurnHistory);
       setGameState('playing');
-      try { playSound('success'); } catch {}
+      try {
+        playSound('success');
+      } catch {}
     } catch (error) {
       console.error('Error in handleCategoryPicked:', error);
     }
@@ -489,7 +635,9 @@ export default function Overshare() {
       await updateDoc(doc(db, 'sessions', sessionCode), { currentQuestion: newQuestion });
       setCurrentQuestion(newQuestion);
       setSkipsUsedThisTurn((n) => n + 1);
-      try { playSound('click'); } catch {}
+      try {
+        playSound('click');
+      } catch {}
     } catch (error) {
       console.error('Error skipping question:', error);
     }
@@ -502,10 +650,10 @@ export default function Overshare() {
 
       const nextTurnIndex = (currentTurnIndex + 1) % count;
 
-      let newAvailable = availableCategories;
-      let newUsed = usedCategories;
-      if (availableCategories.length === 0) {
-        newAvailable = [...selectedCategories];
+      let newAvailable = availableCategories || [];
+      let newUsed = usedCategories || [];
+      if (newAvailable.length === 0) {
+        newAvailable = [...(selectedCategories || [])];
         newUsed = [];
       }
 
@@ -527,18 +675,25 @@ export default function Overshare() {
       setCurrentQuestionAsker('');
       setGameState('categoryPicking');
       setSkipsUsedThisTurn(0);
-      try { playSound('turnTransition'); } catch {}
+      try {
+        playSound('turnTransition');
+      } catch {}
     } catch (error) {
       console.error('Error in handleNextQuestion:', error);
     }
   };
 
+  /* ===========================
+     UI: Reusable
+     =========================== */
   const TopBar = () => (
     <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
       <button
         onClick={() => {
           setAudioEnabled((v) => !v);
-          try { playSound('click'); } catch {}
+          try {
+            playSound('click');
+          } catch {}
         }}
         className="bg-white/20 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 transition-all"
         aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
@@ -626,8 +781,16 @@ export default function Overshare() {
     </div>
   );
 
-  const CategoryCard = ({ categoryKey, category, isSelected, isRecommended, onClick, disabled = false }) => {
-    const IconComponent = (category && iconMap[category.icon]) ? iconMap[category.icon] : MessageCircle;
+  const CategoryCard = ({
+    categoryKey,
+    category,
+    isSelected,
+    isRecommended,
+    onClick,
+    disabled = false
+  }) => {
+    const IconComponent =
+      category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
     return (
       <button
         onClick={onClick}
@@ -637,14 +800,20 @@ export default function Overshare() {
         } ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md'}`}
       >
         <div className="flex items-start space-x-3">
-          <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'}`}>
+          <div
+            className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${
+              category?.color || 'from-gray-400 to-gray-500'
+            }`}
+          >
             <IconComponent className="w-4 h-4 text-white" />
           </div>
           <div className="flex-1">
             <div className="flex items-center space-x-2">
               <h3 className="font-semibold text-gray-800">{category?.name || 'Category'}</h3>
               {isRecommended && (
-                <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">Recommended</span>
+                <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">
+                  Recommended
+                </span>
               )}
             </div>
             <p className="text-sm text-gray-600 mt-1">{category?.description || ''}</p>
@@ -654,24 +823,30 @@ export default function Overshare() {
     );
   };
 
-  const PlayerList = ({ players: playersArr, title, showProgress = false, currentPlayerName = null }) => (
+  const PlayerList = ({ players, title, showProgress = false, currentPlayerName = null }) => (
     <div className="mb-6">
-      <h3 className="text-lg font-semibold text-gray-800 mb-3">{title} ({playersArr.length})</h3>
+      <h3 className="text-lg font-semibold text-gray-800 mb-3">
+        {title} ({players.length})
+      </h3>
       <div className="space-y-2">
-        {playersArr.map((player, index) => (
+        {players.map((player, index) => (
           <div
-            key={index}
+            key={`${player?.name || 'player'}-${index}`}
             className={`flex items-center justify-between p-3 bg-gray-50 rounded-xl ${
-              currentPlayerName === player.name ? 'ring-2 ring-purple-500 bg-purple-50' : ''
+              currentPlayerName === (player && player.name) ? 'ring-2 ring-purple-500 bg-purple-50' : ''
             }`}
           >
-            <span className="font-medium">{player.name}</span>
+            <span className="font-medium">{player?.name || 'Player'}</span>
             <div className="flex items-center space-x-2">
-              {player.isHost && (
-                <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded-full">Host</span>
+              {player?.isHost && (
+                <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded-full">
+                  Host
+                </span>
               )}
-              {showProgress && player.relationshipAnswers && (
-                <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">✓</span>
+              {showProgress && player?.relationshipAnswers && (
+                <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">
+                  ✓
+                </span>
               )}
             </div>
           </div>
@@ -686,6 +861,9 @@ export default function Overshare() {
     </div>
   );
 
+  /* ===========================
+     Screens: Game States
+     =========================== */
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -715,7 +893,9 @@ export default function Overshare() {
             onClick={() => {
               if (!playerName.trim()) return;
               setGameState('survey');
-              try { playSound('click'); } catch {}
+              try {
+                playSound('click');
+              } catch {}
             }}
             disabled={!playerName.trim()}
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -746,7 +926,9 @@ export default function Overshare() {
 
             <button
               onClick={() => {
-                try { playSound('success'); } catch {}
+                try {
+                  playSound('success');
+                } catch {}
                 handleSurveySubmit();
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
@@ -766,7 +948,9 @@ export default function Overshare() {
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}</span>
+              <span className="text-sm text-gray-500">
+                Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}
+              </span>
               <ProgressIndicator current={currentQuestionIndex + 1} total={initialSurveyQuestions.length} className="w-16" />
             </div>
             <h2 className="text-xl font-semibold text-gray-800 mb-6">{currentSurveyQuestion.question}</h2>
@@ -775,10 +959,12 @@ export default function Overshare() {
           <div className="space-y-3">
             {currentSurveyQuestion.options.map((option, index) => (
               <button
-                key={index}
+                key={`${currentSurveyQuestion.id}-${index}`}
                 onClick={() => {
-                  try { playSound('click'); } catch {}
-                  setSurveyAnswers({ ...surveyAnswers, [currentSurveyQuestion.id]: option });
+                  try {
+                    playSound('click');
+                  } catch {}
+                  setSurveyAnswers((prev) => ({ ...prev, [currentSurveyQuestion.id]: option }));
                 }}
                 className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
               >
@@ -803,7 +989,9 @@ export default function Overshare() {
           <div className="space-y-4">
             <button
               onClick={() => {
-                try { playSound('click'); } catch {}
+                try {
+                  playSound('click');
+                } catch {}
                 handleCreateSession();
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
@@ -828,7 +1016,9 @@ export default function Overshare() {
               />
               <button
                 onClick={() => {
-                  try { playSound('click'); } catch {}
+                  try {
+                    playSound('click');
+                  } catch {}
                   handleJoinSession();
                 }}
                 disabled={!sessionCode.trim()}
@@ -844,7 +1034,7 @@ export default function Overshare() {
   }
 
   if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find((p) => p.name === playerName);
+    const isNewPlayer = !players.find((p) => p && p.name === playerName);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -864,12 +1054,15 @@ export default function Overshare() {
               <h3 className="text-lg font-semibold text-gray-800 mb-3">Question Categories</h3>
               <div className="flex flex-wrap gap-2">
                 {selectedCategories.map((categoryKey) => {
-                  const category = (questionCategories || {})[categoryKey];
-                  const IconComponent = (category && iconMap[category.icon]) ? iconMap[category.icon] : MessageCircle;
+                  const category = questionCategories[categoryKey];
+                  const IconComponent =
+                    category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                   return (
                     <div
                       key={categoryKey}
-                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'} text-white text-sm`}
+                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${
+                        category?.color || 'from-gray-400 to-gray-500'
+                      } text-white text-sm`}
                     >
                       <IconComponent className="w-4 h-4" />
                       <span>{category?.name || categoryKey}</span>
@@ -883,7 +1076,9 @@ export default function Overshare() {
           {isNewPlayer && (
             <button
               onClick={async () => {
-                try { playSound('click'); } catch {}
+                try {
+                  playSound('click');
+                } catch {}
                 const newPlayer = {
                   id: Date.now().toString(),
                   name: playerName,
@@ -897,13 +1092,15 @@ export default function Overshare() {
                 if (snap.exists()) {
                   try {
                     await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
-                  } catch (e) {
-                    const data = snap.data();
-                    const updatedPlayers = [ ...(data.players || []), newPlayer ];
+                  } catch {
+                    const data = snap.data() || {};
+                    const updatedPlayers = [...(data.players || []), newPlayer];
                     await updateDoc(sessionRef, { players: updatedPlayers });
                     setPlayers(updatedPlayers);
                   }
-                  try { playSound('success'); } catch {}
+                  try {
+                    playSound('success');
+                  } catch {}
                 }
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
@@ -915,7 +1112,9 @@ export default function Overshare() {
           {isHost && !isNewPlayer && (
             <button
               onClick={async () => {
-                try { playSound('click'); } catch {}
+                try {
+                  playSound('click');
+                } catch {}
                 await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'categoryVoting' });
                 setGameState('categoryVoting');
               }}
@@ -926,7 +1125,9 @@ export default function Overshare() {
             </button>
           )}
 
-          {!isHost && !isNewPlayer && <p className="text-gray-500">Waiting for host to continue...</p>}
+          {!isHost && !isNewPlayer && (
+            <p className="text-gray-500">Waiting for host to continue...</p>
+          )}
         </div>
       </div>
     );
@@ -936,8 +1137,12 @@ export default function Overshare() {
     const recommended = recommendCategories(players, relationshipAnswers);
     const allVotes = Object.values(categoryVotes || {});
     const totalVotes = allVotes.length;
-    const waitingFor = players.filter((p) => !(categoryVotes || {})[p.name]).map((p) => p.name);
-    const allPlayersVoted = players.every((p) => (categoryVotes || {})[p.name] && (categoryVotes || {})[p.name].length > 0);
+    const waitingFor = (players || [])
+      .filter((p) => !(categoryVotes || {})[p?.name])
+      .map((p) => p?.name);
+    const allPlayersVoted = (players || []).every(
+      (p) => (categoryVotes || {})[p?.name] && (categoryVotes || {})[p?.name].length > 0
+    );
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -951,15 +1156,19 @@ export default function Overshare() {
               {hasVotedCategories ? 'Waiting for Others' : 'Vote for Categories'}
             </h2>
             <p className="text-gray-600">
-              {hasVotedCategories ? `${totalVotes} of ${players.length} players have voted` : "Select 2-3 categories you'd like to play with"}
+              {hasVotedCategories
+                ? `${totalVotes} of ${players.length} players have voted`
+                : "Select 2-3 categories you'd like to play with"}
             </p>
-            {hasVotedCategories && <p className="text-sm text-gray-500 mt-2">Session Code: {sessionCode}</p>}
+            {hasVotedCategories && (
+              <p className="text-sm text-gray-500 mt-2">Session Code: {sessionCode}</p>
+            )}
           </div>
 
           {!hasVotedCategories ? (
             <>
               <div className="space-y-3 mb-6">
-                {Object.entries(questionCategories || {}).map(([key, category]) => {
+                {Object.entries(questionCategories).map(([key, category]) => {
                   const isRecommended = recommended.includes(key);
                   const isSelected = selectedCategories.includes(key);
                   const disabled = !isSelected && selectedCategories.length >= 3;
@@ -972,9 +1181,14 @@ export default function Overshare() {
                       isRecommended={isRecommended}
                       disabled={disabled}
                       onClick={() => {
-                        try { playSound('click'); } catch {}
-                        if (isSelected) setSelectedCategories(selectedCategories.filter((c) => c !== key));
-                        else if (selectedCategories.length < 3) setSelectedCategories([...selectedCategories, key]);
+                        try {
+                          playSound('click');
+                        } catch {}
+                        if (isSelected) {
+                          setSelectedCategories((prev) => prev.filter((c) => c !== key));
+                        } else if ((selectedCategories || []).length < 3) {
+                          setSelectedCategories((prev) => [...prev, key]);
+                        }
                       }}
                     />
                   );
@@ -983,10 +1197,10 @@ export default function Overshare() {
 
               <button
                 onClick={() => handleCategoryVote(selectedCategories)}
-                disabled={selectedCategories.length === 0}
+                disabled={(selectedCategories || []).length === 0}
                 className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Submit My Votes ({selectedCategories.length}/3)
+                Submit My Votes ({(selectedCategories || []).length}/3)
               </button>
             </>
           ) : (
@@ -994,13 +1208,18 @@ export default function Overshare() {
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-3">Your Votes:</h3>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {myVotedCategories.map((categoryKey) => {
-                    const category = (questionCategories || {})[categoryKey];
-                    const IconComponent = (category && iconMap[category.icon]) ? iconMap[category.icon] : MessageCircle;
+                  {(myVotedCategories || []).map((categoryKey) => {
+                    const category = questionCategories[categoryKey];
+                    const IconComponent =
+                      category && iconMap[category.icon]
+                        ? iconMap[category.icon]
+                        : MessageCircle;
                     return (
                       <div
                         key={categoryKey}
-                        className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'} text-white text-sm`}
+                        className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${
+                          category?.color || 'from-gray-400 to-gray-500'
+                        } text-white text-sm`}
                       >
                         <IconComponent className="w-4 h-4" />
                         <span>{category?.name || categoryKey}</span>
@@ -1015,8 +1234,12 @@ export default function Overshare() {
                   <p className="text-center text-gray-600 mb-4">All players have voted!</p>
                   <button
                     onClick={async () => {
-                      try { playSound('click'); } catch {}
-                      await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingForHost' });
+                      try {
+                        playSound('click');
+                      } catch {}
+                      await updateDoc(doc(db, 'sessions', sessionCode), {
+                        gameState: 'waitingForHost'
+                      });
                       setGameState('waitingForHost');
                     }}
                     className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
@@ -1033,8 +1256,12 @@ export default function Overshare() {
                   {isHost && (
                     <button
                       onClick={async () => {
-                        try { playSound('click'); } catch {}
-                        await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingForHost' });
+                        try {
+                          playSound('click');
+                        } catch {}
+                        await updateDoc(doc(db, 'sessions', sessionCode), {
+                          gameState: 'waitingForHost'
+                        });
                         setGameState('waitingForHost');
                       }}
                       className="mt-4 text-sm text-purple-600 hover:text-purple-700 underline"
@@ -1046,7 +1273,11 @@ export default function Overshare() {
               ) : (
                 <div className="text-center">
                   <p className="text-gray-600">All players have voted!</p>
-                  {!isHost && <p className="text-sm text-gray-500 mt-2">Waiting for host to start the game...</p>}
+                  {!isHost && (
+                    <p className="text-sm text-gray-500 mt-2">
+                      Waiting for host to start the game...
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -1079,11 +1310,12 @@ export default function Overshare() {
 
           <div className="mb-6">
             <div className="space-y-2">
-              {Object.entries(voteResults || {})
+              {Object.entries(voteResults)
                 .sort((a, b) => b[1] - a[1])
                 .map(([categoryKey, voteCount]) => {
-                  const category = (questionCategories || {})[categoryKey];
-                  const IconComponent = (category && iconMap[category.icon]) ? iconMap[category.icon] : MessageCircle;
+                  const category = questionCategories[categoryKey];
+                  const IconComponent =
+                    category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                   const isSelected = topCategories.includes(categoryKey);
                   return (
                     <div
@@ -1093,10 +1325,16 @@ export default function Overshare() {
                       }`}
                     >
                       <div className="flex items-center space-x-3">
-                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'}`}>
+                        <div
+                          className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${
+                            category?.color || 'from-gray-400 to-gray-500'
+                          }`}
+                        >
                           <IconComponent className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-medium text-gray-800">{category?.name || categoryKey}</span>
+                        <span className="font-medium text-gray-800">
+                          {category?.name || categoryKey}
+                        </span>
                       </div>
                       <span className="text-sm text-gray-600">{voteCount} votes</span>
                     </div>
@@ -1108,7 +1346,9 @@ export default function Overshare() {
           {isHost ? (
             <button
               onClick={async () => {
-                try { playSound('click'); } catch {}
+                try {
+                  playSound('click');
+                } catch {}
                 await updateDoc(doc(db, 'sessions', sessionCode), {
                   gameState: 'relationshipSurvey',
                   selectedCategories: topCategories,
@@ -1121,7 +1361,9 @@ export default function Overshare() {
               Let's See How You Know Each Other
             </button>
           ) : (
-            <p className="text-gray-500">Waiting for {players.find((p) => p.isHost)?.name || 'host'} to continue...</p>
+            <p className="text-gray-500">
+              Waiting for {(players.find((p) => p && p.isHost) || {}).name || 'host'} to continue...
+            </p>
           )}
         </div>
       </div>
@@ -1129,8 +1371,8 @@ export default function Overshare() {
   }
 
   if (gameState === 'relationshipSurvey') {
-    const currentPlayerIndex = Object.keys(relationshipAnswers).length;
-    const otherPlayers = players.filter((p) => p.name !== playerName);
+    const currentPlayerIndex = Object.keys(relationshipAnswers || {}).length;
+    const otherPlayers = (players || []).filter((p) => p && p.name !== playerName);
     const currentPlayer = otherPlayers[currentPlayerIndex];
 
     if (currentPlayerIndex >= otherPlayers.length) {
@@ -1148,7 +1390,9 @@ export default function Overshare() {
 
             <button
               onClick={() => {
-                try { playSound('success'); } catch {}
+                try {
+                  playSound('success');
+                } catch {}
                 handleRelationshipSurveySubmit();
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
@@ -1168,20 +1412,29 @@ export default function Overshare() {
         <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500">Player {currentPlayerIndex + 1} of {otherPlayers.length}</span>
+              <span className="text-sm text-gray-500">
+                Player {currentPlayerIndex + 1} of {otherPlayers.length}
+              </span>
               <ProgressIndicator current={currentPlayerIndex + 1} total={otherPlayers.length} className="w-16" />
             </div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">How are you connected to {currentPlayer?.name}?</h2>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">
+              How are you connected to {currentPlayer?.name}?
+            </h2>
             <p className="text-gray-600 text-sm">This helps us create better questions for your group.</p>
           </div>
 
           <div className="space-y-3">
             {relationshipOptions.map((option, index) => (
               <button
-                key={index}
+                key={`rel-${index}`}
                 onClick={() => {
-                  try { playSound('click'); } catch {}
-                  setRelationshipAnswers({ ...relationshipAnswers, [currentPlayer.name]: option });
+                  try {
+                    playSound('click');
+                  } catch {}
+                  setRelationshipAnswers((prev) => ({
+                    ...prev,
+                    [currentPlayer.name]: option
+                  }));
                 }}
                 className="w-full p-4 text-left border-2 border-gray-200 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition-all"
               >
@@ -1195,8 +1448,8 @@ export default function Overshare() {
   }
 
   if (gameState === 'waitingForOthers') {
-    const playersWithRelationships = players.filter((p) => p.relationshipAnswers);
-    const waitingFor = players.filter((p) => !p.relationshipAnswers).map((p) => p.name);
+    const playersWithRelationships = (players || []).filter((p) => p && p.relationshipAnswers);
+    const waitingFor = (players || []).filter((p) => p && !p.relationshipAnswers).map((p) => p.name);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1211,7 +1464,9 @@ export default function Overshare() {
           </div>
 
           <div className="mb-4">
-            <p className="text-lg text-gray-700">{playersWithRelationships.length} of {players.length} completed</p>
+            <p className="text-lg text-gray-700">
+              {playersWithRelationships.length} of {players.length} completed
+            </p>
           </div>
 
           {waitingFor.length > 0 && (
@@ -1228,7 +1483,7 @@ export default function Overshare() {
 
   if (gameState === 'categoryPicking') {
     const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.name === playerName;
+    const isMyTurn = currentPlayer && currentPlayer.name === playerName;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1245,18 +1500,22 @@ export default function Overshare() {
               </>
             ) : (
               <>
-                <h2 className="text-2xl font-bold text-gray-800 mb-2">{currentPlayer?.name}'s Turn</h2>
+                <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                  {currentPlayer?.name}'s Turn
+                </h2>
                 <p className="text-gray-600">{currentPlayer?.name} is choosing a category...</p>
               </>
             )}
-            <p className="text-sm text-gray-500 mt-2">Round {players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1}</p>
+            <p className="text-sm text-gray-500 mt-2">
+              Round {players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1}
+            </p>
           </div>
 
           {isMyTurn ? (
             <div className="space-y-3">
-              {availableCategories.length > 0 ? (
-                availableCategories.map((categoryKey) => {
-                  const category = (questionCategories || {})[categoryKey];
+              {(availableCategories || []).length > 0 ? (
+                (availableCategories || []).map((categoryKey) => {
+                  const category = questionCategories[categoryKey];
                   return (
                     <CategoryCard
                       key={categoryKey}
@@ -1265,7 +1524,9 @@ export default function Overshare() {
                       isSelected={false}
                       isRecommended={false}
                       onClick={() => {
-                        try { playSound('click'); } catch {}
+                        try {
+                          playSound('click');
+                        } catch {}
                         handleCategoryPicked(categoryKey);
                       }}
                     />
@@ -1273,7 +1534,9 @@ export default function Overshare() {
                 })
               ) : (
                 <div className="text-center p-4 bg-gray-50 rounded-xl">
-                  <p className="text-gray-600">All categories have been used! Categories will reset for the next round.</p>
+                  <p className="text-gray-600">
+                    All categories have been used! Categories will reset for the next round.
+                  </p>
                 </div>
               )}
             </div>
@@ -1284,14 +1547,17 @@ export default function Overshare() {
             </div>
           )}
 
-          {usedCategories.length > 0 && (
+          {(usedCategories || []).length > 0 && (
             <div className="mt-6 pt-6 border-t border-gray-200">
               <h3 className="text-sm font-semibold text-gray-600 mb-2">Already Used:</h3>
               <div className="flex flex-wrap gap-2">
-                {usedCategories.map((categoryKey) => {
-                  const category = (questionCategories || {})[categoryKey];
+                {(usedCategories || []).map((categoryKey) => {
+                  const category = questionCategories[categoryKey];
                   return (
-                    <span key={categoryKey} className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full">
+                    <span
+                      key={categoryKey}
+                      className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-full"
+                    >
                       {category?.name || categoryKey}
                     </span>
                   );
@@ -1305,10 +1571,12 @@ export default function Overshare() {
   }
 
   if (gameState === 'playing') {
-    const currentCategoryData = (questionCategories || {})[currentCategory];
-    const IconComponent = currentCategoryData && iconMap[currentCategoryData.icon] ? iconMap[currentCategoryData.icon] : MessageCircle;
+    const categoryData = questionCategories[currentCategory];
+    const IconComponent =
+      categoryData && iconMap[categoryData.icon] ? iconMap[categoryData.icon] : MessageCircle;
+
     const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.name === playerName;
+    const isMyTurn = currentPlayer && currentPlayer.name === playerName;
     const canSkip = skipsUsedThisTurn < maxSkipsPerTurn;
 
     const round = players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1;
@@ -1325,17 +1593,25 @@ export default function Overshare() {
               <IconComponent className="w-6 h-6 text-white" />
             </div>
 
-            {currentCategoryData && (
+            {categoryData && (
               <div className="mb-4">
-                <span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}>
+                <span
+                  className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${
+                    categoryData.color
+                  } text-white text-sm`}
+                >
                   <IconComponent className="w-3 h-3" />
-                  <span>{currentCategoryData.name}</span>
+                  <span>{categoryData.name}</span>
                 </span>
               </div>
             )}
 
-            <h2 className="text-lg font-semibold text-gray-800 mb-2">{currentPlayer?.name || 'Player'}'s Question</h2>
-            <p className="text-sm text-gray-500 mb-4">Round {round} • Turn {turn} of {players.length || 1}</p>
+            <h2 className="text-lg font-semibold text-gray-800 mb-2">
+              {(currentPlayer && currentPlayer.name) || 'Player'}'s Question
+            </h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Round {round} • Turn {turn} of {players.length || 1}
+            </p>
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-2xl border-l-4 border-purple-500">
               <p className="text-gray-800 text-lg leading-relaxed">{currentQuestion}</p>
             </div>
@@ -1355,37 +1631,35 @@ export default function Overshare() {
                 >
                   <SkipForward className="w-5 h-5 mr-2" />
                   {canSkip ? 'Skip This Question' : 'Skip Used'}
-                  <span className="ml-2 text-sm">({skipsUsedThisTurn}/{maxSkipsPerTurn})</span>
+                  <span className="ml-2 text-sm">
+                    ({skipsUsedThisTurn}/{maxSkipsPerTurn})
+                  </span>
                 </button>
 
                 <button
                   onClick={handleNextQuestion}
                   className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
                 >
-                  Pass to {players.length ? players[(currentTurnIndex + 1) % players.length]?.name : '—'}
+                  Pass to{' '}
+                  {players.length ? players[(currentTurnIndex + 1) % players.length]?.name : '—'}
                 </button>
               </>
             ) : (
               <div className="text-center">
                 <LoadingSpinner />
-                <p className="text-gray-600 mt-4">Waiting for {currentPlayer?.name || 'player'} to finish their turn...</p>
+                <p className="text-gray-600 mt-4">
+                  Waiting for {(currentPlayer && currentPlayer.name) || 'player'} to finish their
+                  turn...
+                </p>
               </div>
             )}
 
             <button
               onClick={() => {
-                try { playSound('click'); } catch {}
+                try {
+                  playSound('click');
+                } catch {}
                 setGameState('waitingRoom');
               }}
               className="w-full bg-white border-2 border-gray-300 text-gray-600 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 transition-all"
             >
-              Back to Lobby
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-}
