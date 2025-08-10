@@ -1,251 +1,1692 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame, Copy, Check, Volume2, VolumeX, X, Bell, History } from 'lucide-react';
+/* =========================
+   Imports
+========================= */
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+  Users,
+  MessageCircle,
+  Heart,
+  Sparkles,
+  Lightbulb,
+  Target,
+  Flame,
+  Volume2,
+  VolumeX,
+  SkipForward,
+  HelpCircle,
+  X
+} from 'lucide-react';
 import { db } from '../lib/firebase';
-import { 
-  doc, 
-  setDoc, 
-  getDoc, 
-  updateDoc, 
-  onSnapshot, 
-  serverTimestamp 
+import {
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  onSnapshot,
+  serverTimestamp,
+  arrayUnion
 } from 'firebase/firestore';
-import { questionCategories as questionData } from '../lib/questionCategories';
+import {
+  questionCategories as qcImport,
+  getRandomQuestion as getRandomQImport
+} from '../lib/questionCategories';
 
+/* =========================
+   Main Component
+========================= */
 export default function Overshare() {
+  /* =========================
+     State
+  ========================= */
   const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
+  const [sessionCode, setSessionCode] = useState('');
+  const [isHost, setIsHost] = useState(false);
+
+  const [players, setPlayers] = useState([]);
   const [surveyAnswers, setSurveyAnswers] = useState({});
   const [relationshipAnswers, setRelationshipAnswers] = useState({});
-  const [sessionCode, setSessionCode] = useState('');
-  const [players, setPlayers] = useState([]);
+
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [currentCategory, setCurrentCategory] = useState('');
   const [selectedCategories, setSelectedCategories] = useState([]);
-  const [isHost, setIsHost] = useState(false);
+
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [availableCategories, setAvailableCategories] = useState([]);
   const [usedCategories, setUsedCategories] = useState([]);
   const [turnHistory, setTurnHistory] = useState([]);
+  const [currentQuestionAsker, setCurrentQuestionAsker] = useState('');
+
   const [categoryVotes, setCategoryVotes] = useState({});
   const [myVotedCategories, setMyVotedCategories] = useState([]);
-  
-  // New state for enhancements
-  const [questionHistory, setQuestionHistory] = useState([]);
-  const [copiedCode, setCopiedCode] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [toasts, setToasts] = useState([]);
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
+  const [hasVotedCategories, setHasVotedCategories] = useState(false);
 
+  const [audioEnabled, setAudioEnabled] = useState(true);
+  const [skipsUsedThisTurn, setSkipsUsedThisTurn] = useState(0);
+  const [maxSkipsPerTurn] = useState(1);
+  const [notification, setNotification] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
 
-  // Waiting Room Screen with copy button and player colors
-  if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find(p => p.name === playerName);
-    
+  /* =========================
+     Refs
+  ========================= */
+  const unsubscribeRef = useRef(null);
+  const prevTurnIndexRef = useRef(0);
+  const audioCtxRef = useRef(null);
+
+  /* =========================
+     Config / Memos
+  ========================= */
+  const iconMap = useMemo(
+    () => ({
+      Sparkles,
+      Heart,
+      Lightbulb,
+      Target,
+      Flame,
+      MessageCircle
+    }),
+    []
+  );
+
+  // Fallback categories (used only if import is missing/shape is different)
+  const FALLBACK_CATEGORIES = useMemo(
+    () => ({
+      icebreakers: {
+        name: 'Icebreakers',
+        description: 'Warm up with easy, fun prompts.',
+        icon: 'Sparkles',
+        color: 'from-purple-500 to-pink-500'
+      },
+      creative: {
+        name: 'Creative',
+        description: 'Imagine, riff, and get playful.',
+        icon: 'Lightbulb',
+        color: 'from-indigo-500 to-purple-500'
+      },
+      deep_dive: {
+        name: 'Deep Dive',
+        description: 'Thoughtful questions with heart.',
+        icon: 'MessageCircle',
+        color: 'from-blue-500 to-cyan-500'
+      },
+      growth: {
+        name: 'Growth',
+        description: 'Reflect, learn, and level up.',
+        icon: 'Target',
+        color: 'from-emerald-500 to-teal-500'
+      },
+      spicy: {
+        name: 'Spicy',
+        description: 'Bold prompts for brave groups.',
+        icon: 'Flame',
+        color: 'from-orange-500 to-red-500'
+      }
+    }),
+    []
+  );
+
+  // Resolve categories regardless of export style (named vs default)
+  const CATEGORIES = useMemo(() => {
+    const raw =
+      qcImport && typeof qcImport === 'object'
+        ? (qcImport.default && typeof qcImport.default === 'object'
+            ? qcImport.default
+            : qcImport)
+        : {};
+
+    const keys = Object.keys(raw || {});
+    if (keys.length > 0) return raw;
+
+    return FALLBACK_CATEGORIES;
+  }, [FALLBACK_CATEGORIES]);
+
+  // Are we using the external library?
+  const libraryOK = useMemo(() => {
+    const usingFallback = CATEGORIES === FALLBACK_CATEGORIES;
+    return (typeof getRandomQImport === 'function') && !usingFallback;
+  }, [CATEGORIES, FALLBACK_CATEGORIES]);
+
+  // Safe question getter (works even if helper not exported)
+  const getQuestion = useCallback(
+    (categoryKey, exclude = []) => {
+      // Try library first: make a few attempts to avoid repeats
+      if (typeof getRandomQImport === 'function') {
+        try {
+          let tries = 6;
+          while (tries-- > 0) {
+            const q = getRandomQImport(categoryKey, exclude);
+            if (q && !exclude.includes(q)) return q;
+          }
+        } catch {}
+      }
+
+      // Fallback pool with repeat-avoidance
+      const fallbackQs = {
+        icebreakers: [
+          'What was a small win you had this week?',
+          'What’s your go-to fun fact about yourself?'
+        ],
+        creative: [
+          'Invent a wild holiday and describe how we celebrate it.',
+          'Merge two movies into one plot — what happens?'
+        ],
+        deep_dive: [
+          'What belief of yours has changed in the last few years?',
+          'What’s a memory that shaped who you are?'
+        ],
+        growth: [
+          'What habit are you trying to build?',
+          'What’s a risk you’re glad you took?'
+        ],
+        spicy: [
+          'What’s a “hot take” you stand by?',
+          'What’s a topic you wish people were more honest about?'
+        ]
+      };
+
+      const pool = fallbackQs[categoryKey] || fallbackQs.icebreakers;
+      let tries = 8;
+      let q = pool[Math.floor(Math.random() * pool.length)];
+      while (exclude.includes(q) && tries-- > 0) {
+        q = pool[Math.floor(Math.random() * pool.length)];
+      }
+      return q;
+    },
+    []
+  );
+
+  const initialSurveyQuestions = [
+    {
+      id: 'personality',
+      question: 'How would you describe yourself in social settings?',
+      options: [
+        'Outgoing & Love being center of attention',
+        'Friendly but prefer smaller groups',
+        'Thoughtful listener who observes first',
+        'Quiet but warm up over time'
+      ]
+    },
+    {
+      id: 'comfort_level',
+      question: 'In conversations, you prefer:',
+      options: [
+        'Light, fun topics that make everyone laugh',
+        'Mix of light and meaningful discussions',
+        'Deep, personal conversations',
+        'Thought-provoking questions about life'
+      ]
+    },
+    {
+      id: 'sharing_style',
+      question: 'When sharing personal things, you:',
+      options: [
+        'Share openly and easily',
+        'Share when others share first',
+        'Prefer to listen more than share',
+        'Share deeply with close people only'
+      ]
+    },
+    {
+      id: 'group_energy',
+      question: 'You contribute best to group conversations when:',
+      options: [
+        'Everyone is laughing and having fun',
+        "There's a good mix of personalities",
+        'People are being real and authentic',
+        'The conversation has depth and meaning'
+      ]
+    }
+  ];
+
+  const relationshipOptions = [
+    'Romantic partner/spouse',
+    'Close friend (know each other well)',
+    'Friend (hang out regularly)',
+    'Family member',
+    'Coworker/colleague',
+    "Acquaintance (don't know well)",
+    'Just met/new friend'
+  ];
+
+  /* =========================
+     Audio (no eval, CSP-safe)
+  ========================= */
+  const getAudio = () => {
+    if (!audioEnabled) return null;
+    try {
+      if (!audioCtxRef.current) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        audioCtxRef.current = new Ctx();
+      }
+      return audioCtxRef.current;
+    } catch {
+      return null;
+    }
+  };
+
+  const playSound = (type) => {
+    const audio = getAudio();
+    if (!audio) return;
+
+    const tone = (seq) => {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.connect(gain);
+      gain.connect(audio.destination);
+      gain.gain.setValueAtTime(0.1, audio.currentTime);
+      seq(osc, gain, audio.currentTime);
+      osc.start();
+    };
+
+    const sounds = {
+      click: () =>
+        tone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(800, t0);
+          osc.frequency.exponentialRampToValueAtTime(600, t0 + 0.1);
+          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.1);
+          osc.stop(t0 + 0.1);
+        }),
+      success: () =>
+        tone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(523, t0);
+          osc.frequency.setValueAtTime(659, t0 + 0.1);
+          osc.frequency.setValueAtTime(784, t0 + 0.2);
+          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
+          osc.stop(t0 + 0.3);
+        }),
+      turnTransition: () =>
+        tone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(440, t0);
+          osc.frequency.setValueAtTime(554, t0 + 0.15);
+          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
+          osc.stop(t0 + 0.3);
+        })
+    };
+
+    if (sounds[type]) sounds[type]();
+  };
+
+  /* =========================
+     Notifications
+  ========================= */
+  const showNotification = (message, emoji = '🎉') => {
+    setNotification({ message, emoji });
+    window.clearTimeout((showNotification._t || 0));
+    showNotification._t = window.setTimeout(() => setNotification(null), 3000);
+  };
+
+  /* =========================
+     Algorithms (category logic)
+  ========================= */
+  const calculateGroupIntimacy = (relationships) => {
+    if (!relationships || Object.keys(relationships).length === 0) return 2;
+    const intimacyMap = {
+      'Romantic partner/spouse': 5,
+      'Close friend (know each other well)': 4,
+      'Friend (hang out regularly)': 3,
+      'Family member': 4,
+      'Coworker/colleague': 2,
+      "Acquaintance (don't know well)": 1,
+      'Just met/new friend': 1
+    };
+    const scores = Object.values(relationships).map((rel) => intimacyMap[rel] || 2);
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  };
+
+  const getGroupComfortLevel = (list) => {
+    if (!list || list.length === 0) return 2;
+    const comfortMap = {
+      'Light, fun topics that make everyone laugh': 2,
+      'Mix of light and meaningful discussions': 3,
+      'Deep, personal conversations': 4,
+      'Thought-provoking questions about life': 4
+    };
+    const scores =
+      list
+        .filter((p) => p?.surveyAnswers?.comfort_level)
+        .map((p) => comfortMap[p.surveyAnswers.comfort_level] || 2) || [];
+    if (scores.length === 0) return 2;
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  };
+
+  const recommendCategories = (list, relationships) => {
+    const intimacy = calculateGroupIntimacy(relationships);
+    const comfort = getGroupComfortLevel(list);
+    const groupSize = list?.length || 0;
+    const rec = [];
+    if (groupSize > 3 || intimacy < 3) rec.push('icebreakers');
+    if (groupSize > 2) rec.push('creative');
+    if (intimacy >= 3 && comfort >= 3) rec.push('deep_dive');
+    if (intimacy >= 4 || (groupSize === 2 && intimacy >= 3)) rec.push('growth');
+    if (intimacy >= 4 && comfort >= 4 && groupSize <= 4) rec.push('spicy');
+    return rec;
+  };
+
+  const generatePersonalizedQuestion = (list, surveyData, relationships, forceCategory = null) => {
+    let category = forceCategory;
+    if (!category) {
+      if ((selectedCategories || []).length === 0) {
+        const rec = recommendCategories(list, relationships);
+        category = rec[Math.floor(Math.random() * (rec.length || 1))] || 'icebreakers';
+      } else {
+        category =
+          selectedCategories[Math.floor(Math.random() * selectedCategories.length)] ||
+          'icebreakers';
+      }
+    }
+    const question = getQuestion(category);
+    setCurrentCategory(category);
+    return question;
+  };
+
+  const calculateTopCategories = (votes) => {
+    const byPlayer = votes || {};
+    const voteCount = {};
+    Object.values(byPlayer).forEach((playerVotes) => {
+      (playerVotes || []).forEach((cat) => {
+        voteCount[cat] = (voteCount[cat] || 0) + 1;
+      });
+    });
+    const sorted = Object.entries(voteCount).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+    return sorted.slice(0, Math.min(4, Math.max(3, sorted.length)));
+  };
+
+  /* =========================
+     Firestore Session Helpers
+  ========================= */
+  const createFirebaseSession = async (code, hostPlayer) => {
+    try {
+      await setDoc(doc(db, 'sessions', code), {
+        hostId: hostPlayer.id,
+        players: [hostPlayer],
+        currentQuestion: '',
+        currentCategory: '',
+        currentQuestionAsker: '',
+        gameState: 'waitingRoom',
+        selectedCategories: [],
+        currentTurnIndex: 0,
+        availableCategories: [],
+        usedCategories: [],
+        turnHistory: [],
+        categoryVotes: {},
+        createdAt: serverTimestamp()
+      });
+      return true;
+    } catch (err) {
+      console.error('Error creating session:', err);
+      return false;
+    }
+  };
+
+  const listenToSession = useCallback(
+    (code) => {
+      if (!code) return () => {};
+
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+
+      const sessionRef = doc(db, 'sessions', code);
+      let previousPlayerCount = 0;
+
+      const unsubscribe = onSnapshot(
+        sessionRef,
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data() || {};
+
+          const newCount = (data.players || []).length;
+          if (previousPlayerCount > 0 && newCount > previousPlayerCount) {
+            const newPlayer = (data.players || [])[newCount - 1];
+            if (newPlayer && newPlayer.name !== playerName) {
+              showNotification(`${newPlayer.name} joined the game!`, '👋');
+              try {
+                playSound('success');
+              } catch {}
+            }
+          }
+          previousPlayerCount = newCount;
+
+          setPlayers([...(data.players || [])]);
+          setCurrentQuestion(data.currentQuestion || '');
+          setCurrentCategory(data.currentCategory || '');
+          setCurrentQuestionAsker(data.currentQuestionAsker || '');
+          setSelectedCategories([...(data.selectedCategories || [])]);
+          setCurrentTurnIndex(
+            typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0
+          );
+          setAvailableCategories([...(data.availableCategories || [])]);
+          setUsedCategories([...(data.usedCategories || [])]);
+          setTurnHistory([...(data.turnHistory || [])]);
+          setCategoryVotes(data.categoryVotes || {});
+
+          const incomingRaw = data.gameState || 'waitingRoom';
+          const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
+
+          const incomingTurn =
+            typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
+          if (incomingTurn !== prevTurnIndexRef.current) {
+            setSkipsUsedThisTurn(0);
+            prevTurnIndexRef.current = incomingTurn;
+          }
+
+          if (incoming !== gameState) {
+            setGameState(incoming);
+            if (incoming === 'playing') {
+              try {
+                playSound('success');
+              } catch {}
+            } else if (incoming === 'categoryPicking') {
+              try {
+                playSound('turnTransition');
+              } catch {}
+            }
+          }
+        },
+        (error) => {
+          console.error('Firebase listener error:', error);
+        }
+      );
+
+      unsubscribeRef.current = unsubscribe;
+      return unsubscribe;
+    },
+    [db, playerName, gameState]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+      try {
+        if (audioCtxRef.current?.close) audioCtxRef.current.close();
+      } catch {}
+    };
+  }, []);
+
+  /* =========================
+     Handlers: Survey & Session
+  ========================= */
+  const handleSurveySubmit = () => {
+    if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
+      try {
+        playSound('success');
+      } catch {}
+      setGameState('createOrJoin');
+    }
+  };
+
+  const handleCreateSession = async () => {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const hostPlayer = {
+      id: Date.now().toString(),
+      name: playerName,
+      isHost: true,
+      surveyAnswers,
+      joinedAt: new Date().toISOString()
+    };
+
+    const ok = await createFirebaseSession(code, hostPlayer);
+    if (!ok) {
+      alert('Failed to create session. Please try again.');
+      return;
+    }
+
+    setSessionCode(code);
+    setIsHost(true);
+    setPlayers([hostPlayer]);
+    setGameState('waitingRoom');
+    try {
+      playSound('success');
+    } catch {}
+    listenToSession(code);
+  };
+
+  const handleJoinSession = async () => {
+    const code = (sessionCode || '').trim().toUpperCase();
+    if (!code) return;
+
+    const sessionRef = doc(db, 'sessions', code);
+    const sessionSnap = await getDoc(sessionRef);
+    if (!sessionSnap.exists()) {
+      alert('Session not found. Please check the code and try again.');
+      return;
+    }
+    const data = sessionSnap.data() || {};
+
+    const alreadyIn = (data.players || []).some((p) => p?.name === playerName);
+    if (!alreadyIn) {
+      const newPlayer = {
+        id: Date.now().toString(),
+        name: playerName,
+        isHost: false,
+        surveyAnswers,
+        joinedAt: new Date().toISOString()
+      };
+      try {
+        await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
+      } catch {
+        const fresh = (await getDoc(sessionRef)).data() || {};
+        const updated = [...(fresh.players || []), newPlayer];
+        await updateDoc(sessionRef, { players: updated });
+      }
+    }
+
+    setPlayers([...(data.players || [])]);
+    setSelectedCategories([...(data.selectedCategories || [])]);
+    setSessionCode(code);
+
+    listenToSession(code);
+    setGameState('waitingRoom');
+    try {
+      playSound('success');
+    } catch {}
+  };
+
+  /* =========================
+     Handlers: Relationship Survey & Voting
+  ========================= */
+  const handleRelationshipSurveySubmit = async () => {
+    if (!sessionCode) return;
+    try {
+      const sessionRef = doc(db, 'sessions', sessionCode);
+      const sessionSnap = await getDoc(sessionRef);
+      if (!sessionSnap.exists()) return;
+
+      const data = sessionSnap.data() || {};
+      const updatedPlayers = (data.players || []).map((p) =>
+        p?.name === playerName ? { ...p, relationshipAnswers } : p
+      );
+
+      await updateDoc(sessionRef, { players: updatedPlayers });
+
+      const allCompleted = updatedPlayers.every((p) => p?.relationshipAnswers);
+      if (allCompleted) {
+        const top =
+          (data.selectedCategories && data.selectedCategories.length > 0)
+            ? data.selectedCategories
+            : Object.keys(CATEGORIES);
+
+        await updateDoc(sessionRef, {
+          gameState: 'categoryPicking',
+          currentTurnIndex: 0,
+          availableCategories: top,
+          usedCategories: [],
+          turnHistory: []
+        });
+        setGameState('categoryPicking');
+        try {
+          playSound('success');
+        } catch {}
+      } else {
+        setGameState('waitingForOthers');
+      }
+    } catch (err) {
+      console.error('Error updating player data:', err);
+    }
+  };
+
+  const handleCategoryVote = async (selectedCats) => {
+    if (!sessionCode) return;
+    try {
+      const sessionRef = doc(db, 'sessions', sessionCode);
+      const sessionSnap = await getDoc(sessionRef);
+      if (!sessionSnap.exists()) return;
+
+      const data = sessionSnap.data() || {};
+      const currentVotes = { ...(data.categoryVotes || {}) };
+      currentVotes[playerName] = selectedCats;
+
+      await updateDoc(sessionRef, { categoryVotes: currentVotes });
+
+      setMyVotedCategories(selectedCats);
+      setHasVotedCategories(true);
+      try {
+        playSound('success');
+      } catch {}
+
+      const list = data.players || [];
+      if (list.length > 1) {
+        const allPlayersVoted = list.every(
+          (p) => (currentVotes[p?.name] || []).length > 0
+        );
+        if (allPlayersVoted) {
+          await updateDoc(sessionRef, { gameState: 'waitingForHost' });
+          setGameState('waitingForHost');
+        }
+      }
+    } catch (err) {
+      console.error('Error submitting category votes:', err);
+    }
+  };
+
+  /* =========================
+     Handlers: Picking / Playing Flow
+  ========================= */
+  const handleCategoryPicked = async (category) => {
+    if (!sessionCode) return;
+    try {
+      const currentPlayer = players[currentTurnIndex] || players[0];
+      if (!currentPlayer) return;
+
+      const question = generatePersonalizedQuestion(
+        players,
+        surveyAnswers,
+        relationshipAnswers,
+        category
+      );
+
+      const newUsed = [...usedCategories, category];
+      const newAvail = (availableCategories || []).filter((c) => c !== category);
+      const newHistory = [...turnHistory, { player: currentPlayer.name, category, question }];
+
+      await updateDoc(doc(db, 'sessions', sessionCode), {
+        currentQuestion: question,
+        currentCategory: category,
+        gameState: 'playing',
+        usedCategories: newUsed,
+        availableCategories: newAvail,
+        turnHistory: newHistory,
+        currentQuestionAsker: currentPlayer.name
+      });
+
+      setCurrentQuestion(question);
+      setCurrentCategory(category);
+      setCurrentQuestionAsker(currentPlayer.name);
+      setUsedCategories(newUsed);
+      setAvailableCategories(newAvail);
+      setTurnHistory(newHistory);
+      setGameState('playing');
+      try {
+        playSound('success');
+      } catch {}
+    } catch (err) {
+      console.error('Error in handleCategoryPicked:', err);
+    }
+  };
+
+  const handleSkipQuestion = async () => {
+    if (skipsUsedThisTurn >= maxSkipsPerTurn) {
+      showNotification("You've used your skip for this turn!", '⏭️');
+      return;
+    }
+    if (!sessionCode) return;
+
+    const forcedCategory =
+      currentCategory ||
+      (turnHistory[turnHistory.length - 1]?.category) ||
+      (selectedCategories[0]) ||
+      'icebreakers';
+
+    const newQuestion = getQuestion(forcedCategory, [currentQuestion]);
+
+    try {
+      await updateDoc(doc(db, 'sessions', sessionCode), {
+        currentQuestion: newQuestion,
+        currentCategory: forcedCategory
+      });
+      setCurrentQuestion(newQuestion);
+      setCurrentCategory(forcedCategory);
+      setSkipsUsedThisTurn((n) => n + 1);
+      try { playSound('click'); } catch {}
+    } catch (err) {
+      console.error('Error skipping question:', err);
+    }
+  };
+
+  const handleNextQuestion = async () => {
+    if (!sessionCode) return;
+    try {
+      const count = players.length || 0;
+      if (count === 0) return;
+
+      const nextTurnIndex = (currentTurnIndex + 1) % count;
+
+      let newAvailable = availableCategories;
+      let newUsed = usedCategories;
+      if ((availableCategories || []).length === 0) {
+        newAvailable = [...(selectedCategories || [])];
+        newUsed = [];
+      }
+
+      await updateDoc(doc(db, 'sessions', sessionCode), {
+        gameState: 'categoryPicking',
+        currentTurnIndex: nextTurnIndex,
+        availableCategories: newAvailable,
+        usedCategories: newUsed,
+        currentQuestion: '',
+        currentCategory: '',
+        currentQuestionAsker: ''
+      });
+
+      setCurrentTurnIndex(nextTurnIndex);
+      setAvailableCategories(newAvailable);
+      setUsedCategories(newUsed);
+      setCurrentQuestion('');
+      setCurrentCategory('');
+      setCurrentQuestionAsker('');
+      setGameState('categoryPicking');
+      setSkipsUsedThisTurn(0);
+      try {
+        playSound('turnTransition');
+      } catch {}
+    } catch (err) {
+      console.error('Error in handleNextQuestion:', err);
+    }
+  };
+
+  /* =========================
+     UI: Top Bar / Modals / Partials
+  ========================= */
+  const TopBar = () => (
+    <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+      <span
+        title={libraryOK ? 'Using external question library' : 'Using built-in fallback questions'}
+        className={`hidden sm:inline-flex px-2 py-1 rounded-lg text-xs font-medium ${libraryOK ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}
+      >
+        {libraryOK ? 'Library' : 'Fallback'}
+      </span>
+
+      <button
+        onClick={() => {
+          setAudioEnabled((v) => !v);
+          try {
+            playSound('click');
+          } catch {}
+        }}
+        className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
+        aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
+        title={audioEnabled ? 'Sound: on' : 'Sound: off'}
+      >
+        {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+      </button>
+      <button
+        onClick={() => setShowHelp(true)}
+        className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
+        aria-label="Help"
+        title="Help"
+      >
+        <HelpCircle className="w-5 h-5" />
+      </button>
+    </div>
+  );
+
+  const HelpModal = () => {
+    if (!showHelp) return null;
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">Session {sessionCode}</h2>
-            <p className="text-gray-600 dark:text-gray-300 mb-3">Share this code with others to join</p>
-            
-            {/* Copy Code Button */}
-            <button
-              onClick={copySessionCode}
-              className="inline-flex items-center space-x-2 px-4 py-2 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900/50 transition-all"
-            >
-              {copiedCode ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4" />
-                  <span>Copy Code</span>
-                </>
-              )}
-            </button>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setShowHelp(false);
+        }}
+      >
+        <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-2xl p-6 relative">
+          <button
+            className="absolute top-3 right-3 text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100"
+            onClick={() => setShowHelp(false)}
+            aria-label="Close help"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-center gap-3 mb-4">
+            <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500">
+              <MessageCircle className="w-5 h-5 text-white" />
+            </div>
+            <h3 className="text-xl font-semibold">How to Play Overshare</h3>
           </div>
-          
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Players ({players.length})</h3>
-            <div className="space-y-2">
-              {players.map((player, index) => (
-                <div 
-                  key={index} 
-                  className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-xl"
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-3 h-3 rounded-full bg-gradient-to-r ${getPlayerColor(index)}`}></div>
-                    <span className="font-medium text-gray-800 dark:text-gray-200">{player.name}</span>
-                  </div>
-                  {player.isHost && <span className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-1 rounded-full">Host</span>}
-                </div>
-              ))}
+
+          <div className="space-y-3 text-gray-700 dark:text-gray-200">
+            <p>It’s a conversation game — don’t overthink it.</p>
+            <p>Take turns asking the group the question on your screen, then pass it to the next player.</p>
+            <p>Play it your way: bend rules, make new ones — just have fun.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-300">Pro tip: the more you share, the better the stories get.</p>
+          </div>
+
+          <div className="mt-6 border-t border-gray-200 dark:border-gray-600 pt-4 flex items-center justify-between">
+            <span className="text-sm text-gray-500 dark:text-gray-300">Enjoying the game?</span>
+            <a
+              href="https://venmo.com/ucfnate"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white text-sm font-medium hover:shadow-md"
+            >
+              💜 Donate
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const NotificationToast = () => {
+    if (!notification) return null;
+    return (
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl shadow-lg p-4 z-50 animate-bounce">
+        <div className="flex items-center space-x-2">
+          <span className="text-2xl">{notification.emoji}</span>
+          <span className="font-medium text-gray-800 dark:text-gray-100">{notification.message}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const ProgressIndicator = ({ current, total, className = '' }) => (
+    <div className={`w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full ${className}`}>
+      <div
+        className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-300"
+        style={{ width: `${total ? Math.min(100, Math.max(0, (current / total) * 100)) : 0}%` }}
+      />
+    </div>
+  );
+
+  const CategoryCard = ({ categoryKey, category, isSelected, isRecommended, onClick, disabled = false }) => {
+    const IconComponent =
+      category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
+    return (
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
+          isSelected ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/30' : 'border-gray-200 dark:border-gray-600 hover:border-purple-300'
+        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md'}`}
+      >
+        <div className="flex items-start space-x-3">
+          <div
+            className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${
+              category?.color || 'from-gray-400 to-gray-500'
+            }`}
+          >
+            <IconComponent className="w-4 h-4 text-white" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center space-x-2">
+              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{category?.name || 'Category'}</h3>
+              {isRecommended && (
+                <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200 px-2 py-1 rounded-full">
+                  Recommended
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">{category?.description || ''}</p>
+          </div>
+        </div>
+      </button>
+    );
+  };
+
+  const PlayerList = ({ players: list, title, showProgress = false, currentPlayerName = null }) => (
+    <div className="mb-6">
+      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">
+        {title} ({(list || []).length})
+      </h3>
+      <div className="space-y-2">
+        {(list || []).map((player, index) => (
+          <div
+            key={`${player?.id || 'p'}-${index}`}
+            className={`flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-xl ${
+              currentPlayerName === player?.name ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-900/30' : ''
+            }`}
+          >
+            <span className="font-medium">{player?.name || 'Player'}</span>
+            <div className="flex items-center space-x-2">
+              {player?.isHost && (
+                <span className="text-xs bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-200 px-2 py-1 rounded-full">
+                  Host
+                </span>
+              )}
+              {showProgress && player?.relationshipAnswers && (
+                <span className="text-xs bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-200 px-2 py-1 rounded-full">
+                  ✓
+                </span>
+              )}
             </div>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const LoadingSpinner = ({ size = 'w-8 h-8' }) => (
+    <div className="inline-flex items-center justify-center">
+      <div className={`${size} border-4 border-purple-500 border-t-transparent rounded-full animate-spin`} />
+    </div>
+  );
+
+  /* =========================
+     Screens: Welcome
+  ========================= */
+  if (gameState === 'welcome') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
+              <MessageCircle className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-3xl font-bold mb-2">Overshare</h1>
+            <p className="text-gray-600 dark:text-gray-300">Personalized conversation games that bring people closer together</p>
+          </div>
+
+          <div className="mb-6">
+            <input
+              type="text"
+              placeholder="Enter your name"
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+            />
+          </div>
+
+          <button
+            onClick={() => {
+              if (!playerName.trim()) return;
+              setGameState('survey');
+              try {
+                playSound('click');
+              } catch {}
+            }}
+            disabled={!playerName.trim()}
+            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Let's Get Started
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Screens: Survey
+  ========================= */
+  if (gameState === 'survey') {
+    const currentQuestionIndex = Object.keys(surveyAnswers).length;
+    const currentSurveyQuestion = initialSurveyQuestions[currentQuestionIndex];
+
+    if (currentQuestionIndex >= initialSurveyQuestions.length) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+          <TopBar />
+          <HelpModal />
+          <NotificationToast />
+          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+            <div className="mb-6">
+              <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold mb-2">Perfect, {playerName}!</h2>
+              <p className="text-gray-600 dark:text-gray-300">We'll use this to create personalized questions for your group.</p>
+            </div>
+            <button
+              onClick={() => {
+                try {
+                  playSound('success');
+                } catch {}
+                handleSurveySubmit();
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-gray-500 dark:text-gray-300">
+                Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}
+              </span>
+              <ProgressIndicator current={currentQuestionIndex + 1} total={initialSurveyQuestions.length} className="w-16" />
+            </div>
+            <h2 className="text-xl font-semibold mb-6">{currentSurveyQuestion.question}</h2>
+          </div>
+
+          <div className="space-y-3">
+            {currentSurveyQuestion.options.map((option, index) => (
+              <button
+                key={`${currentSurveyQuestion.id}-${index}`}
+                onClick={() => {
+                  try {
+                    playSound('click');
+                  } catch {}
+                  setSurveyAnswers((prev) => ({ ...prev, [currentSurveyQuestion.id]: option }));
+                }}
+                className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Screens: Create or Join
+  ========================= */
+  if (gameState === 'createOrJoin') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <h2 className="text-2xl font-bold mb-6">Ready to play, {playerName}!</h2>
+
+          <div className="space-y-4">
+            <button
+              onClick={() => {
+                try {
+                  playSound('click');
+                } catch {}
+                handleCreateSession();
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
+            >
+              <Users className="w-5 h-5 mr-2" />
+              Create New Game
+            </button>
+
+            <div className="flex items-center my-4">
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600" />
+              <span className="px-4 text-gray-500 dark:text-gray-300 text-sm">or</span>
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600" />
+            </div>
+
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder="Enter session code"
+                value={sessionCode}
+                onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
+                className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+              />
+              <button
+                onClick={() => {
+                  try {
+                    playSound('click');
+                  } catch {}
+                  handleJoinSession();
+                }}
+                disabled={!sessionCode.trim()}
+                className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Join Game
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Screens: Waiting Room
+  ========================= */
+  if (gameState === 'waitingRoom') {
+    const isNewPlayer = !players.find((p) => p?.name === playerName);
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold mb-2">Session {sessionCode}</h2>
+            <p className="text-gray-600 dark:text-gray-300">Share this code with others to join</p>
+          </div>
+
+          <PlayerList players={players} title="Players" />
 
           {selectedCategories.length > 0 && (
             <div className="mb-6">
-              <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Question Categories</h3>
+              <h3 className="text-lg font-semibold mb-3">Question Categories</h3>
               <div className="flex flex-wrap gap-2">
-                {selectedCategories.map(categoryKey => {
-                  const category = questionCategories[categoryKey];
-                  const IconComponent = category.icon;
+                {selectedCategories.map((categoryKey) => {
+                  const category = CATEGORIES[categoryKey];
+                  const IconComponent =
+                    category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                   return (
                     <div
                       key={categoryKey}
-                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category.color} text-white text-sm`}
+                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${
+                        category?.color || 'from-gray-400 to-gray-500'
+                      } text-white text-sm`}
                     >
                       <IconComponent className="w-4 h-4" />
-                      <span>{category.name}</span>
+                      <span>{category?.name || categoryKey}</span>
                     </div>
                   );
                 })}
               </div>
             </div>
           )}
-          
+
           {isNewPlayer && (
             <button
               onClick={async () => {
-                // Add player to session
+                try {
+                  playSound('click');
+                } catch {}
                 const newPlayer = {
                   id: Date.now().toString(),
                   name: playerName,
                   isHost: false,
                   surveyAnswers,
-                  joinedAt: new Date().toISOString(),
-                  color: getPlayerColor(players.length)
+                  joinedAt: new Date().toISOString()
                 };
-                
+
                 const sessionRef = doc(db, 'sessions', sessionCode);
-                const sessionSnap = await getDoc(sessionRef);
-                
-                if (sessionSnap.exists()) {
-                  const sessionData = sessionSnap.data();
-                  const updatedPlayers = [...sessionData.players, newPlayer];
-                  
-                  await updateDoc(sessionRef, {
-                    players: updatedPlayers
-                  });
-                  
-                  setPlayers(updatedPlayers);
-                  playSound('join');
+                const snap = await getDoc(sessionRef);
+                if (snap.exists()) {
+                  try {
+                    await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
+                  } catch {
+                    const data = snap.data() || {};
+                    const updatedPlayers = [...(data.players || []), newPlayer];
+                    await updateDoc(sessionRef, { players: updatedPlayers });
+                    setPlayers(updatedPlayers);
+                  }
+                  try {
+                    playSound('success');
+                  } catch {}
                 }
               }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4 transform hover:scale-105"
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
             >
               Join Game
             </button>
           )}
-          
+
           {isHost && !isNewPlayer && (
             <button
               onClick={async () => {
-                // Move everyone to category voting after all players joined
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  gameState: 'categoryVoting'
-                });
-                playSound('success');
-                transitionToState('categoryVoting');
+                if (!sessionCode) return;
+                try {
+                  playSound('click');
+                } catch {}
+                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'categoryVoting' });
+                setGameState('categoryVoting');
               }}
               disabled={players.length < 2}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Start Game
             </button>
           )}
-          
+
           {!isHost && !isNewPlayer && (
-            <p className="text-gray-500 dark:text-gray-400">Waiting for host to continue...</p>
+            <p className="text-gray-500 dark:text-gray-300">Waiting for host to continue...</p>
           )}
         </div>
       </div>
     );
   }
 
-  // Category Picking Screen (Turn-based) with animations
+  /* =========================
+     Screens: Category Voting
+  ========================= */
+  if (gameState === 'categoryVoting') {
+    const recommended = recommendCategories(players, relationshipAnswers);
+    const allVotes = Object.values(categoryVotes || {});
+    const totalVotes = allVotes.length;
+    const waitingFor = (players || [])
+      .filter((p) => !(categoryVotes || {})[p?.name])
+      .map((p) => p?.name);
+    const allPlayersVoted = (players || []).every(
+      (p) => (categoryVotes || {})[p?.name] && (categoryVotes || {})[p?.name].length > 0
+    );
+
+    const entries = Object.entries(CATEGORIES || {}); // ensure we render something
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold mb-2">
+              {hasVotedCategories ? 'Waiting for Others' : 'Vote for Categories'}
+            </h2>
+            <p className="text-gray-600 dark:text-gray-300">
+              {hasVotedCategories
+                ? `${totalVotes} of ${players.length} players have voted`
+                : "Select 2-3 categories you'd like to play with"}
+            </p>
+            {hasVotedCategories && (
+              <p className="text-sm text-gray-500 dark:text-gray-300 mt-2">Session Code: {sessionCode}</p>
+            )}
+          </div>
+
+          {!hasVotedCategories ? (
+            <>
+              <div className="space-y-3 mb-6">
+                {entries.map(([key, category]) => {
+                  const isRecommended = (recommended || []).includes(key);
+                  const isSelected = (selectedCategories || []).includes(key);
+                  const disabled = !isSelected && (selectedCategories || []).length >= 3;
+                  return (
+                    <CategoryCard
+                      key={key}
+                      categoryKey={key}
+                      category={category}
+                      isSelected={isSelected}
+                      isRecommended={isRecommended}
+                      disabled={disabled}
+                      onClick={() => {
+                        try {
+                          playSound('click');
+                        } catch {}
+                        setSelectedCategories((prev) => {
+                          const has = prev.includes(key);
+                          if (has) return prev.filter((c) => c !== key);
+                          if (prev.length >= 3) return prev;
+                          return [...prev, key];
+                        });
+                      }}
+                    />
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={() => handleCategoryVote(selectedCategories)}
+                disabled={(selectedCategories || []).length === 0}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit My Votes ({(selectedCategories || []).length}/3)
+              </button>
+            </>
+          ) : (
+            <div>
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold mb-3">Your Votes:</h3>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {(myVotedCategories || []).map((categoryKey) => {
+                    const category = CATEGORIES[categoryKey];
+                    const IconComponent =
+                      category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
+                    return (
+                      <div
+                        key={categoryKey}
+                        className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${
+                          category?.color || 'from-gray-400 to-gray-500'
+                        } text-white text-sm`}
+                      >
+                        <IconComponent className="w-4 h-4" />
+                        <span>{category?.name || categoryKey}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {allPlayersVoted && isHost ? (
+                <div className="space-y-3">
+                  <p className="text-center text-gray-600 dark:text-gray-300 mb-4">All players have voted!</p>
+                  <button
+                    onClick={async () => {
+                      if (!sessionCode) return;
+                      try {
+                        playSound('click');
+                      } catch {}
+                      await updateDoc(doc(db, 'sessions', sessionCode), {
+                        gameState: 'waitingForHost'
+                      });
+                      setGameState('waitingForHost');
+                    }}
+                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+                  >
+                    View Results & Start Game
+                  </button>
+                </div>
+              ) : waitingFor.length > 0 ? (
+                <div className="text-center">
+                  <LoadingSpinner size="w-16 h-16" />
+                  <p className="text-gray-600 dark:text-gray-300 mb-2 mt-4">Waiting for:</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-300">{waitingFor.join(', ')}</p>
+
+                  {isHost && (
+                    <button
+                      onClick={async () => {
+                        if (!sessionCode) return;
+                        try {
+                          playSound('click');
+                        } catch {}
+                        await updateDoc(doc(db, 'sessions', sessionCode), {
+                          gameState: 'waitingForHost'
+                        });
+                        setGameState('waitingForHost');
+                      }}
+                      className="mt-4 text-sm text-purple-700 dark:text-purple-300 hover:underline"
+                    >
+                      Continue without waiting
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center">
+                  <p className="text-gray-600 dark:text-gray-300">All players have voted!</p>
+                  {!isHost && (
+                    <p className="text-sm text-gray-500 dark:text-gray-300 mt-2">Waiting for host to start the game...</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Screens: Waiting For Host (DARK MODE FIXED)
+  ========================= */
+  if (gameState === 'waitingForHost') {
+    const voteResults = {};
+    Object.values(categoryVotes || {}).forEach((votes) => {
+      (votes || []).forEach((cat) => {
+        voteResults[cat] = (voteResults[cat] || 0) + 1;
+      });
+    });
+    const topCategories = calculateTopCategories(categoryVotes || {});
+
+    const recommendedFallback = recommendCategories(players, relationshipAnswers);
+    const safeTop =
+      (topCategories && topCategories.length > 0)
+        ? topCategories
+        : (recommendedFallback && recommendedFallback.length > 0)
+          ? recommendedFallback
+          : Object.keys(CATEGORIES);
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold mb-2">All Votes Are In!</h2>
+            <p className="text-gray-600 dark:text-gray-300">Top categories based on everyone's votes:</p>
+          </div>
+
+          <div className="mb-6">
+            <div className="space-y-2">
+              {Object.entries(voteResults)
+                .sort((a, b) => b[1] - a[1])
+                .map(([categoryKey, voteCount]) => {
+                  const category = CATEGORIES[categoryKey];
+                  const IconComponent =
+                    category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
+                  const isSelected = (safeTop || []).includes(categoryKey);
+                  return (
+                    <div
+                      key={categoryKey}
+                      className={`flex items-center justify-between p-3 rounded-xl border ${isSelected
+                        ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-300 dark:border-purple-500/50'
+                        : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div
+                          className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${
+                            category?.color || 'from-gray-400 to-gray-500'
+                          }`}
+                        >
+                          <IconComponent className="w-4 h-4 text-white" />
+                        </div>
+                        <span className="font-medium">{category?.name || categoryKey}</span>
+                      </div>
+                      <span className="text-sm text-gray-600 dark:text-gray-300">{voteCount} votes</span>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+
+          {isHost ? (
+            <button
+              onClick={async () => {
+                if (!sessionCode) return;
+                try {
+                  playSound('click');
+                } catch {}
+                await updateDoc(doc(db, 'sessions', sessionCode), {
+                  gameState: 'relationshipSurvey',
+                  selectedCategories: safeTop,
+                  availableCategories: safeTop
+                });
+                setGameState('relationshipSurvey');
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Let's See How You Know Each Other
+            </button>
+          ) : (
+            <p className="text-gray-500 dark:text-gray-300">
+              Waiting for {players.find((p) => p?.isHost)?.name || 'host'} to continue...
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Screens: Relationship Survey
+  ========================= */
+  if (gameState === 'relationshipSurvey') {
+    const currentPlayerIndex = Object.keys(relationshipAnswers || {}).length;
+    const otherPlayers = (players || []).filter((p) => p?.name !== playerName);
+    const currentPlayer = otherPlayers[currentPlayerIndex];
+
+    if (currentPlayerIndex >= otherPlayers.length) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+          <TopBar />
+          <HelpModal />
+          <NotificationToast />
+          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+            <div className="mb-6">
+              <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold mb-2">Great!</h2>
+              <p className="text-gray-600 dark:text-gray-300">Now let's choose what types of questions you want to explore.</p>
+            </div>
+            <button
+              onClick={() => {
+                try {
+                  playSound('success');
+                } catch {}
+                handleRelationshipSurveySubmit();
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-gray-500 dark:text-gray-300">
+                Player {currentPlayerIndex + 1} of {otherPlayers.length}
+              </span>
+              <ProgressIndicator current={currentPlayerIndex + 1} total={otherPlayers.length} className="w-16" />
+            </div>
+            <h2 className="text-xl font-semibold mb-2">
+              How are you connected to {currentPlayer?.name}?
+            </h2>
+            <p className="text-gray-600 dark:text-gray-300 text-sm">This helps us create better questions for your group.</p>
+          </div>
+
+          <div className="space-y-3">
+            {relationshipOptions.map((option, index) => (
+              <button
+                key={`rel-${index}`}
+                onClick={() => {
+                  try {
+                    playSound('click');
+                  } catch {}
+                  if (!currentPlayer?.name) return;
+                  setRelationshipAnswers((prev) => ({ ...prev, [currentPlayer.name]: option }));
+                }}
+                className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Screens: Waiting For Others
+  ========================= */
+  if (gameState === 'waitingForOthers') {
+    const playersWithRelationships = (players || []).filter((p) => p?.relationshipAnswers);
+    const waitingFor = (players || [])
+      .filter((p) => !p?.relationshipAnswers)
+      .map((p) => p?.name);
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold mb-2">Thanks!</h2>
+            <p className="text-gray-600 dark:text-gray-300">Waiting for others to complete their surveys...</p>
+          </div>
+
+          <div className="mb-4">
+            <p className="text-lg">
+              {playersWithRelationships.length} of {players.length} completed
+            </p>
+          </div>
+
+          {waitingFor.length > 0 && (
+            <div className="text-center">
+              <LoadingSpinner size="w-16 h-16" />
+              <p className="text-gray-600 dark:text-gray-300 mb-2 mt-4">Still waiting for:</p>
+              <p className="text-sm text-gray-500 dark:text-gray-300">{waitingFor.join(', ')}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
+     Screens: Category Picking
+  ========================= */
   if (gameState === 'categoryPicking') {
     const currentPlayer = players[currentTurnIndex] || players[0];
     const isMyTurn = currentPlayer?.name === playerName;
-    
+
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
             <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
             {isMyTurn ? (
               <>
-                <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">Your Turn!</h2>
+                <h2 className="text-2xl font-bold mb-2">Your Turn!</h2>
                 <p className="text-gray-600 dark:text-gray-300">Choose a category for the next question</p>
               </>
             ) : (
               <>
-                <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">{currentPlayer?.name}'s Turn</h2>
+                <h2 className="text-2xl font-bold mb-2">{currentPlayer?.name}'s Turn</h2>
                 <p className="text-gray-600 dark:text-gray-300">{currentPlayer?.name} is choosing a category...</p>
               </>
             )}
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Round {Math.floor(turnHistory.length / players.length) + 1}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-300 mt-2">
+              Round {players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1}
+            </p>
           </div>
-          
+
           {isMyTurn ? (
             <div className="space-y-3">
-              {availableCategories.length > 0 ? (
-                availableCategories.map((categoryKey) => {
-                  const category = questionCategories[categoryKey];
-                  const IconComponent = category.icon;
-                  
+              {(availableCategories || []).length > 0 ? (
+                (availableCategories || []).map((categoryKey) => {
+                  const category = CATEGORIES[categoryKey];
                   return (
-                    <button
+                    <CategoryCard
                       key={categoryKey}
-                      onClick={() => handleCategoryPicked(categoryKey)}
-                      className="w-full p-4 rounded-xl border-2 border-gray-200 dark:border-gray-600 hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-left transform hover:scale-105"
-                    >
-                      <div className="flex items-start space-x-3">
-                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
-                          <IconComponent className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-gray-800 dark:text-gray-100">{category.name}</h3>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{category.description}</p>
-                        </div>
-                      </div>
-                    </button>
+                      categoryKey={categoryKey}
+                      category={category}
+                      isSelected={false}
+                      isRecommended={false}
+                      onClick={() => {
+                        try {
+                          playSound('click');
+                        } catch {}
+                        handleCategoryPicked(categoryKey);
+                      }}
+                    />
                   );
                 })
               ) : (
                 <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-xl">
-                  <p className="text-gray-600 dark:text-gray-300">All categories have been used! Categories will reset for the next round.</p>
+                  <p className="text-gray-600 dark:text-gray-300">
+                    All categories have been used! Categories will reset for the next round.
+                  </p>
                 </div>
               )}
             </div>
           ) : (
             <div className="text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full mb-4">
-                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-              </div>
-              <p className="text-gray-500 dark:text-gray-400">Waiting for {currentPlayer?.name} to choose...</p>
+              <LoadingSpinner size="w-16 h-16" />
+              <p className="text-gray-500 dark:text-gray-300 mt-4">Waiting for {currentPlayer?.name} to choose...</p>
             </div>
           )}
-          
-          {usedCategories.length > 0 && (
-            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-2">Already Used:</h3>
+
+          {(usedCategories || []).length > 0 && (
+            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-600">
+              <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-2">Already Used:</h3>
               <div className="flex flex-wrap gap-2">
-                {usedCategories.map(categoryKey => {
-                  const category = questionCategories[categoryKey];
+                {(usedCategories || []).map((categoryKey) => {
+                  const category = CATEGORIES[categoryKey];
                   return (
                     <span
                       key={categoryKey}
-                      className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full"
+                      className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full"
                     >
-                      {category.name}
+                      {category?.name || categoryKey}
                     </span>
                   );
                 })}
@@ -257,85 +1698,98 @@ export default function Overshare() {
     );
   }
 
-  // Playing Screen with question history
+  /* =========================
+     Screens: Playing (CRASH FIXED)
+  ========================= */
   if (gameState === 'playing') {
-    const currentCategoryData = questionCategories[currentCategory];
-    const IconComponent = currentCategoryData?.icon || MessageCircle;
+    const currentCategoryData = CATEGORIES[currentCategory] || null; // fixed
+    const IconComponent =
+      currentCategoryData && iconMap[currentCategoryData.icon]
+        ? iconMap[currentCategoryData.icon]
+        : MessageCircle;
     const currentPlayer = players[currentTurnIndex] || players[0];
     const isMyTurn = currentPlayer?.name === playerName;
+    const canSkip = skipsUsedThisTurn < maxSkipsPerTurn;
+
+    const round = players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1;
+    const turn = players.length ? ((turnHistory.length || 0) % players.length) + 1 : 1;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar />
+        <HelpModal />
+        <NotificationToast />
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4">
               <IconComponent className="w-6 h-6 text-white" />
             </div>
-            
+
             {currentCategoryData && (
               <div className="mb-4">
-                <span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}>
+                <span
+                  className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}
+                >
                   <IconComponent className="w-3 h-3" />
                   <span>{currentCategoryData.name}</span>
                 </span>
               </div>
             )}
-            
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">
-              {currentPlayer?.name}'s Question
+
+            <h2 className="text-lg font-semibold mb-2">
+              {currentPlayer?.name || 'Player'}'s Question
             </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-              Round {Math.floor(turnHistory.length / players.length) + 1} • Turn {(turnHistory.length % players.length) + 1} of {players.length}
+            <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">
+              Round {round} • Turn {turn} of {players.length || 1}
             </p>
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500">
-              <p className="text-gray-800 dark:text-gray-100 text-lg leading-relaxed">{currentQuestion}</p>
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400">
+              <p className="text-lg leading-relaxed">{currentQuestion}</p>
             </div>
           </div>
-          
-          {/* Question History */}
-          {questionHistory.length > 0 && (
-            <div className="mb-4">
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
-              >
-                <History className="w-4 h-4" />
-                <span>Recent Questions ({questionHistory.length})</span>
-              </button>
-              
-              {showHistory && (
-                <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
-                  {questionHistory.slice(-5).reverse().map((item, index) => (
-                    <div key={index} className="text-xs text-gray-500 dark:text-gray-400 p-2 bg-gray-50 dark:bg-gray-700 rounded">
-                      <span className="font-medium">{item.askedBy}:</span> {item.question.substring(0, 50)}...
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          
+
           <div className="space-y-4">
             {isMyTurn ? (
-              <button
-                onClick={handleNextQuestion}
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all transform hover:scale-105"
-              >
-                Pass to {players[(currentTurnIndex + 1) % players.length]?.name}
-              </button>
+              <>
+                <button
+                  onClick={handleSkipQuestion}
+                  disabled={!canSkip}
+                  className={`w-full py-3 px-6 rounded-xl font-semibold text-lg transition-all flex items-center justify-center ${
+                    canSkip
+                      ? 'bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/10'
+                      : 'bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  <SkipForward className="w-5 h-5 mr-2" />
+                  {canSkip ? 'Skip This Question' : 'Skip Used'}
+                  <span className="ml-2 text-sm">
+                    ({skipsUsedThisTurn}/{maxSkipsPerTurn})
+                  </span>
+                </button>
+
+                <button
+                  onClick={handleNextQuestion}
+                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+                >
+                  Pass to {players.length ? players[(currentTurnIndex + 1) % players.length]?.name : '—'}
+                </button>
+              </>
             ) : (
               <div className="text-center">
-                <p className="text-gray-600 dark:text-gray-300">Waiting for {currentPlayer?.name} to finish their turn...</p>
+                <LoadingSpinner />
+                <p className="text-gray-600 dark:text-gray-300 mt-4">
+                  Waiting for {currentPlayer?.name || 'player'} to finish their turn...
+                </p>
               </div>
             )}
-            
+
             <button
               onClick={() => {
-                playSound('click');
-                transitionToState('waitingRoom');
+                try {
+                  playSound('click');
+                } catch {}
+                setGameState('waitingRoom');
               }}
-              className="w-full bg-white dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-all"
+              className="w-full bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-all"
             >
               Back to Lobby
             </button>
@@ -345,1181 +1799,8 @@ export default function Overshare() {
     );
   }
 
-  // Waiting for Others Screen (After Relationship Survey)
-  if (gameState === 'waitingForOthers') {
-    const playersWithRelationships = players.filter(p => p.relationshipAnswers);
-    const waitingFor = players.filter(p => !p.relationshipAnswers).map(p => p.name);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <div className="mb-6">
-            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">Thanks!</h2>
-            <p className="text-gray-600 dark:text-gray-300">Waiting for others to complete their surveys...</p>
-          </div>
-          
-          <div className="mb-4">
-            <p className="text-lg text-gray-700 dark:text-gray-200">{playersWithRelationships.length} of {players.length} completed</p>
-          </div>
-          
-          {waitingFor.length > 0 && (
-            <div className="text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full mb-4">
-                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-              </div>
-              <p className="text-gray-600 dark:text-gray-300 mb-2">Still waiting for:</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{waitingFor.join(', ')}</p>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
+  /* =========================
+     Fallback
+  ========================= */
   return null;
-
-  // Survey Screen with dark mode
-  if (gameState === 'survey') {
-    const currentQuestionIndex = Object.keys(surveyAnswers).length;
-    const currentSurveyQuestion = initialSurveyQuestions[currentQuestionIndex];
-    
-    if (currentQuestionIndex >= initialSurveyQuestions.length) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-          <ToastContainer />
-          <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-            <div className="mb-6">
-              <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">Perfect, {playerName}!</h2>
-              <p className="text-gray-600 dark:text-gray-300">We'll use this to create personalized questions for your group.</p>
-            </div>
-            
-            <button
-              onClick={handleSurveySubmit}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all transform hover:scale-105"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500 dark:text-gray-400">Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}</span>
-              <div className="w-16 h-2 bg-gray-200 dark:bg-gray-700 rounded-full">
-                <div 
-                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
-                  style={{ width: `${((currentQuestionIndex + 1) / initialSurveyQuestions.length) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-            <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-6">{currentSurveyQuestion.question}</h2>
-          </div>
-          
-          <div className="space-y-3">
-            {currentSurveyQuestion.options.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => {
-                  setSurveyAnswers({
-                    ...surveyAnswers,
-                    [currentSurveyQuestion.id]: option
-                  });
-                  playSound('click');
-                }}
-                className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-gray-800 dark:text-gray-200"
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Create or Join Screen
-  if (gameState === 'createOrJoin') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6">Ready to play, {playerName}!</h2>
-          
-          <div className="space-y-4">
-            <button
-              onClick={handleCreateSession}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center transform hover:scale-105"
-            >
-              <Users className="w-5 h-5 mr-2" />
-              Create New Game
-            </button>
-            
-            <div className="flex items-center my-4">
-              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
-              <span className="px-4 text-gray-500 dark:text-gray-400 text-sm">or</span>
-              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
-            </div>
-            
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="Enter session code"
-                value={sessionCode}
-                onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-              />
-              <button
-                onClick={handleJoinSession}
-                disabled={!sessionCode.trim()}
-                className="w-full bg-white dark:bg-gray-700 border-2 border-purple-500 text-purple-500 dark:text-purple-400 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
-              >
-                Join Game
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Relationship Survey Screen
-  if (gameState === 'relationshipSurvey') {
-    const currentPlayerIndex = Object.keys(relationshipAnswers).length;
-    // Filter out yourself from the players list
-    const otherPlayers = players.filter(p => p.name !== playerName);
-    
-    // Skip directly if playing alone
-    if (otherPlayers.length === 0) {
-      handleRelationshipSurveySubmit();
-      return null;
-    }
-    
-    const currentPlayer = otherPlayers[currentPlayerIndex];
-    
-    if (currentPlayerIndex >= otherPlayers.length) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-          <ToastContainer />
-          <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-            <div className="mb-6">
-              <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">Great!</h2>
-              <p className="text-gray-600 dark:text-gray-300">Now let's choose what types of questions you want to explore.</p>
-            </div>
-            
-            <button
-              onClick={handleRelationshipSurveySubmit}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all transform hover:scale-105"
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500 dark:text-gray-400">Player {currentPlayerIndex + 1} of {otherPlayers.length}</span>
-              <div className="w-16 h-2 bg-gray-200 dark:bg-gray-700 rounded-full">
-                <div 
-                  className="h-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
-                  style={{ width: `${((currentPlayerIndex + 1) / otherPlayers.length) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-            <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-2">How are you connected to {currentPlayer?.name}?</h2>
-            <p className="text-gray-600 dark:text-gray-300 text-sm">This helps us create better questions for your group.</p>
-          </div>
-          
-          <div className="space-y-3">
-            {relationshipOptions.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => {
-                  setRelationshipAnswers({
-                    ...relationshipAnswers,
-                    [currentPlayer.name]: option
-                  });
-                  playSound('click');
-                }}
-                className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all text-gray-800 dark:text-gray-200"
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Category Voting Screen (All players vote)
-  if (gameState === 'categoryVoting') {
-    const recommended = recommendCategories(players, relationshipAnswers);
-    const hasVoted = myVotedCategories.length > 0;
-    const allVotes = Object.values(categoryVotes);
-    const totalVotes = allVotes.length;
-    const waitingFor = players.filter(p => !categoryVotes[p.name]).map(p => p.name);
-    const allPlayersVoted = players.every(p => categoryVotes[p.name] && categoryVotes[p.name].length > 0);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <div className="mb-6 text-center">
-            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
-              {hasVoted ? 'Waiting for Others' : 'Vote for Categories'}
-            </h2>
-            <p className="text-gray-600 dark:text-gray-300">
-              {hasVoted 
-                ? `${totalVotes} of ${players.length} players have voted`
-                : 'Select 2-3 categories you\'d like to play with'
-              }
-            </p>
-            {hasVoted && (
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Session Code: {sessionCode}</p>
-            )}
-          </div>
-          
-          {!hasVoted ? (
-            <>
-              <div className="space-y-3 mb-6">
-                {Object.entries(questionCategories).map(([key, category]) => {
-                  const IconComponent = category.icon;
-                  const isRecommended = recommended.includes(key);
-                  const isSelected = selectedCategories.includes(key);
-                  
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        if (isSelected) {
-                          setSelectedCategories(selectedCategories.filter(c => c !== key));
-                        } else if (selectedCategories.length < 3) {
-                          setSelectedCategories([...selectedCategories, key]);
-                        }
-                        playSound('click');
-                      }}
-                      disabled={!isSelected && selectedCategories.length >= 3}
-                      className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
-                        isSelected 
-                          ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' 
-                          : 'border-gray-200 dark:border-gray-600 hover:border-purple-300'
-                      } ${!isSelected && selectedCategories.length >= 3 ? 'opacity-50' : ''}`}
-                    >
-                      <div className="flex items-start space-x-3">
-                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
-                          <IconComponent className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-2">
-                            <h3 className="font-semibold text-gray-800 dark:text-gray-100">{category.name}</h3>
-                            {isRecommended && (
-                              <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 px-2 py-1 rounded-full">
-                                Recommended
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{category.description}</p>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              
-              <button
-                onClick={() => handleCategoryVote(selectedCategories)}
-                disabled={selectedCategories.length === 0}
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
-              >
-                Submit My Votes ({selectedCategories.length}/3)
-              </button>
-            </>
-          ) : (
-            <div>
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">Your Votes:</h3>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {myVotedCategories.map(categoryKey => {
-                    const category = questionCategories[categoryKey];
-                    const IconComponent = category.icon;
-                    return (
-                      <div
-                        key={categoryKey}
-                        className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category.color} text-white text-sm`}
-                      >
-                        <IconComponent className="w-4 h-4" />
-                        <span>{category.name}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              
-              {allPlayersVoted && isHost ? (
-                <div className="space-y-3">
-                  <p className="text-center text-gray-600 dark:text-gray-300 mb-4">All players have voted!</p>
-                  <button
-                    onClick={() => {
-                      updateDoc(doc(db, 'sessions', sessionCode), {
-                        gameState: 'waitingForHost'
-                      });
-                      transitionToState('waitingForHost');
-                    }}
-                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all transform hover:scale-105"
-                  >
-                    View Results & Start Game
-                  </button>
-                </div>
-              ) : waitingFor.length > 0 ? (
-                <div className="text-center">
-                  <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full mb-4">
-                    <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-                  </div>
-                  <p className="text-gray-600 dark:text-gray-300 mb-2">Waiting for:</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">{waitingFor.join(', ')}</p>
-                  
-                  {isHost && (
-                    <button
-                      onClick={() => {
-                        updateDoc(doc(db, 'sessions', sessionCode), {
-                          gameState: 'waitingForHost'
-                        });
-                        transitionToState('waitingForHost');
-                      }}
-                      className="mt-4 text-sm text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 underline"
-                    >
-                      Continue without waiting
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center">
-                  <p className="text-gray-600 dark:text-gray-300">All players have voted!</p>
-                  {!isHost && <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Waiting for host to start the game...</p>}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Waiting for Host Screen (After Category Voting)
-  if (gameState === 'waitingForHost') {
-    const voteResults = {};
-    Object.values(categoryVotes).forEach(votes => {
-      votes.forEach(cat => {
-        voteResults[cat] = (voteResults[cat] || 0) + 1;
-      });
-    });
-    
-    const topCategories = calculateTopCategories(categoryVotes);
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">All Votes Are In!</h2>
-            <p className="text-gray-600 dark:text-gray-300">Top categories based on everyone's votes:</p>
-          </div>
-          
-          <div className="mb-6">
-            <div className="space-y-2">
-              {Object.entries(voteResults)
-                .sort((a, b) => b[1] - a[1])
-                .map(([categoryKey, voteCount]) => {
-                  const category = questionCategories[categoryKey];
-                  const IconComponent = category.icon;
-                  const isSelected = topCategories.includes(categoryKey);
-                  
-                  return (
-                    <div
-                      key={categoryKey}
-                      className={`flex items-center justify-between p-3 rounded-xl ${
-                        isSelected ? 'bg-purple-50 dark:bg-purple-900/20 border-2 border-purple-300 dark:border-purple-700' : 'bg-gray-50 dark:bg-gray-700'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category.color}`}>
-                          <IconComponent className="w-4 h-4 text-white" />
-                        </div>
-                        <span className="font-medium text-gray-800 dark:text-gray-200">{category.name}</span>
-                      </div>
-                      <span className="text-sm text-gray-600 dark:text-gray-400">{voteCount} votes</span>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-          
-          {isHost ? (
-            <button
-              onClick={async () => {
-                // Calculate and save the top categories before moving to relationship survey
-                const topCategories = calculateTopCategories(categoryVotes);
-                
-                // Skip relationship survey if single player
-                if (players.length === 1) {
-                 try {
-  // ... some code ...
-  await updateDoc(doc(db, 'sessions', sessionCode), {
-    currentTurnIndex: 0,
-    selectedCategories: topCategories,
-    availableCategories: topCategories,
-    usedCategories: [],
-    turnHistory: []
-  });
-  // ... maybe more code ...
-    } catch (error) {
-      console.error('Error submitting category votes:', error);
-      addToast('Failed to submit votes', 'error');
-    }
-  };
-
-  const calculateTopCategories = (votes) => {
-    const voteCount = {};
-    
-    // Count votes for each category
-    Object.values(votes).forEach(playerVotes => {
-      playerVotes.forEach(category => {
-        voteCount[category] = (voteCount[category] || 0) + 1;
-      });
-    });
-    
-    // Sort categories by vote count
-    const sortedCategories = Object.entries(voteCount)
-      .sort((a, b) => b[1] - a[1])
-      .map(([category]) => category);
-    
-    // Return top 3-4 categories, or all if less than 3
-    return sortedCategories.slice(0, Math.min(4, Math.max(3, sortedCategories.length)));
-  };
-
-  const handleStartGame = async () => {
-    // Get the selected categories from Firebase (they were already calculated during voting)
-    const sessionRef = doc(db, 'sessions', sessionCode);
-    const sessionSnap = await getDoc(sessionRef);
-    
-    if (sessionSnap.exists()) {
-      const sessionData = sessionSnap.data();
-      const topCategories = sessionData.selectedCategories || calculateTopCategories(categoryVotes);
-      
-      // Initialize turn-based system with voted categories
-      await updateDoc(sessionRef, {
-        gameState: 'categoryPicking',
-        currentTurnIndex: 0,
-        selectedCategories: topCategories,
-        availableCategories: topCategories,
-        usedCategories: [],
-        turnHistory: []
-      });
-      
-      setSelectedCategories(topCategories);
-      setAvailableCategories(topCategories);
-      playSound('success');
-      transitionToState('categoryPicking');
-    }
-  };
-
-  const handleCategoryPicked = async (category) => {
-    const currentPlayer = players[currentTurnIndex];
-    const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, category);
-    
-    // Update Firebase with the selected category and question
-    const newUsedCategories = [...usedCategories, category];
-    const newAvailableCategories = availableCategories.filter(c => c !== category);
-    const newTurnHistory = [...turnHistory, {
-      player: currentPlayer.name,
-      category: category,
-      question: question
-    }];
-    
-    // Add to question history
-    setQuestionHistory(prev => [...prev.slice(-4), {
-      question,
-      category,
-      askedBy: currentPlayer.name,
-      timestamp: Date.now()
-    }]);
-    
-    await updateDoc(doc(db, 'sessions', sessionCode), {
-      currentQuestion: question,
-      currentCategory: category,
-      gameState: 'playing',
-      usedCategories: newUsedCategories,
-      availableCategories: newAvailableCategories,
-      turnHistory: newTurnHistory,
-      currentQuestionAsker: currentPlayer.name
-    });
-    
-    setCurrentQuestion(question);
-    playSound('click');
-    transitionToState('playing');
-  };
-
-  const handleNextQuestion = async () => {
-    // Move to next player's turn
-    const nextTurnIndex = (currentTurnIndex + 1) % players.length;
-    
-    // Check if we need to reset categories (when all have been used)
-    let newAvailableCategories = availableCategories;
-    let newUsedCategories = usedCategories;
-    
-    // If no categories are available, reset them
-    if (availableCategories.length === 0) {
-      newAvailableCategories = selectedCategories;
-      newUsedCategories = [];
-    }
-    
-    await updateDoc(doc(db, 'sessions', sessionCode), {
-      gameState: 'categoryPicking',
-      currentTurnIndex: nextTurnIndex,
-      availableCategories: newAvailableCategories,
-      usedCategories: newUsedCategories
-    });
-    
-    setCurrentTurnIndex(nextTurnIndex);
-    setAvailableCategories(newAvailableCategories);
-    setUsedCategories(newUsedCategories);
-    playSound('click');
-    transitionToState('categoryPicking');
-  };
-
-  // Welcome Screen with dark mode support
-  if (gameState === 'welcome') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 dark:from-purple-900 dark:via-pink-900 dark:to-orange-900 flex items-center justify-center p-4">
-        <ToastContainer />
-        <div className={`bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl transition-all duration-300 ${isAnimating ? 'scale-95 opacity-50' : 'scale-100 opacity-100'}`}>
-          <div className="mb-6">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
-              <MessageCircle className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-2">Overshare</h1>
-            <p className="text-gray-600 dark:text-gray-300">Personalized conversation games that bring people closer together</p>
-          </div>
-          
-          <div className="mb-6">
-            <input
-              type="text"
-              placeholder="Enter your name"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 transition-colors"
-            />
-          </div>
-          
-          <button
-            onClick={() => {
-              if (playerName.trim()) {
-                playSound('click');
-                setGameState('survey');
-              }
-            }}
-            disabled={!playerName.trim()}
-            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105"
-          >
-            Let's Get Started
-          </button>
-          
-          <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className="mt-4 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-          >
-            {soundEnabled ? <Volume2 className="w-5 h-5 inline" /> : <VolumeX className="w-5 h-5 inline" />}
-            <span className="ml-2 text-sm">{soundEnabled ? 'Soun'use client';
-
-import React, { useState, useEffect } from 'react';
-import { Users, MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame, Copy, Check, Volume2, VolumeX, X, Bell, History } from 'lucide-react';
-import { db } from '../lib/firebase';
-import { 
-  doc, 
-  setDoc, 
-  getDoc, 
-  updateDoc, 
-  onSnapshot, 
-  serverTimestamp 
-} from 'firebase/firestore';
-import { questionCategories as questionData } from '../lib/questionCategories';
-
-export default function Overshare() {
-  const [gameState, setGameState] = useState('welcome');
-  const [playerName, setPlayerName] = useState('');
-  const [surveyAnswers, setSurveyAnswers] = useState({});
-  const [relationshipAnswers, setRelationshipAnswers] = useState({});
-  const [sessionCode, setSessionCode] = useState('');
-  const [players, setPlayers] = useState([]);
-  const [currentQuestion, setCurrentQuestion] = useState('');
-  const [currentCategory, setCurrentCategory] = useState('');
-  const [selectedCategories, setSelectedCategories] = useState([]);
-  const [isHost, setIsHost] = useState(false);
-  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
-  const [availableCategories, setAvailableCategories] = useState([]);
-  const [usedCategories, setUsedCategories] = useState([]);
-  const [turnHistory, setTurnHistory] = useState([]);
-  const [categoryVotes, setCategoryVotes] = useState({});
-  const [myVotedCategories, setMyVotedCategories] = useState([]);
-  
-  // New state for enhancements
-  const [questionHistory, setQuestionHistory] = useState([]);
-  const [copiedCode, setCopiedCode] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [toasts, setToasts] = useState([]);
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
-
-  // Player colors for visual distinction
-  const playerColors = [
-    'from-blue-400 to-blue-600',
-    'from-green-400 to-green-600',
-    'from-purple-400 to-purple-600',
-    'from-pink-400 to-pink-600',
-    'from-yellow-400 to-yellow-600',
-    'from-red-400 to-red-600',
-    'from-indigo-400 to-indigo-600',
-    'from-teal-400 to-teal-600'
-  ];
-
-  // Icon mapping for imported question categories
-  const iconMap = {
-    'Sparkles': Sparkles,
-    'Heart': Heart,
-    'Lightbulb': Lightbulb,
-    'Target': Target,
-    'Flame': Flame,
-    'MessageCircle': MessageCircle
-  };
-
-  // Transform the imported data to include actual icon components
-  const questionCategories = Object.entries(questionData).reduce((acc, [key, category]) => {
-    acc[key] = {
-      ...category,
-      icon: iconMap[category.icon] || MessageCircle
-    };
-    return acc;
-  }, {});
-
-  // Sound effects helper
-  const playSound = (type) => {
-    if (!soundEnabled) return;
-    
-    const sounds = {
-      join: 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE',
-      success: 'data:audio/wav;base64,UklGRqAGAABXQVZFZm10IBAAAAABAAEAiBUAAIgVAAABAAgAZGF0YXwGAABYWF1hZGZpam1ub3Fxb25ubmxqamdmZGNjYmJhYmFhYWFhYWFhYWFhYWJiY2RlZ2lrbG5wcnN1d3h5ent8fH5+f4CAgYGCgoKCgoKCgoKCgYGAgH9+fXx7enl4d3Z1dHNycXBvbm1sa2pqaWhnZmVkY2JhYGBfX19fX19fX19fX19fX19gYGFiYmNkZWdpam1vcHN1d3l7fH5/gYGCg4SEhYWFhYWFhYWFhYWEhIOCgYB/fn18e3p5eHd2dXRzcnFwb25tbGtqaWhnZmVkY2NiYmFhYWFhYWFhYWFhYWFhYWFhYWFiYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGBgoODhISFhYWFhYWFhYWFhYWFhYWFhISEg4KCgYB/fn18e3p5eHd2dXRzcnFwb25tbGtqaWhnZ2ZlZGNiYmFhYWBgYGBgYGBgYGBgYGBgYGBgYGBhYWFiY2RlZmdpamttbm9wcnN0dXZ3eHl6e3x9fn+AgYKDhISFhYWGhoaGhoaGhoaGhoaGhoaGhYWFhISCgoF/fn17enl3dnR0cnBvbWxqaWhnaWVkYmFhYWBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGFhYmNkZWZnaGlrbG5vcHFyc3R1d3h5ent8fX5/gIGCg4SEhYWGhoaGh4eHh4eHh4eHh4eHh4eHh4eGhoaGhYSEg4KBgH9+fXt6eXh3dnV0c3JxcG9ubGtqaGdnZmVkY2JiYWFhYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGFhYmJjZGVmaGlqam1ucHFyc3R1dnd4eXp7fH1+f4CBgoOEhIWFhoaGh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4aGhoaFhISCgoGAf359fHt6eXh3dnV0c3JxcG9ubWxramlnZ2ZlZGNjYmFhYWBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGFhYmJjZGVmaGhpamxtbm9wcXJzdHV2d3h5ent8fX5+f4CBgoOEhIWFhoaGh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eGhoaGhYSEg4KBgH9+fXx7enl4d3Z1dHNycXBvbm1sq2ppaGdmZWRjYmJhYWFgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGFhYmJjZGVmZ2hpamxtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4OEhYWGhoaHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4aGhoWFhISCgoGAf359fHt6eXh3dnV0c3JxcG9ubWxramlnZ2ZlZGRjYmJhYWFgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYWFiYmNkZWZnaGlqbG1ub3Bxc3N0dXZ3eHl6e3x9fn+AgYKDhISFhoaGh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHhoaGhYWEg4KCgYB/fn18e3p5eHd2dXRzcnFwb25tbGtqaWhnZmVkY2NiYmFhYWBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBhYWFiYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SEhYWGhoaHh4eHh4eHh4eHhw==',
-      click: 'data:audio/wav;base64,UklGRiQCAABXQVZFZm10IBAAAAABAAEAiBUAAIgVAAABAAgAZGF0YQACAAB7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3uAfYB9gH2AfYB9gH2AfYB9gH2AfYB9gH2AfYB9gH2AfYiEiISIhIiEiISIhIiEiISIhIiEiISIhIiEiISIhIiElpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpCWkJaQlpDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAiIaIhoiGiIaIhoiGiIaIhoiGiIaIhoiGiIaIhoiGiIaIhoiGiIZ6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoR6hHqEeoQYMBgwGDAYMBgwGDAYMBgwGDAYMBgwGDAYMBgwGDAYMBgwGDAYMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
-    };
-    
-    try {
-      const audio = new Audio(sounds[type] || sounds.click);
-      audio.volume = 0.3;
-      audio.play().catch(() => {});
-    } catch (e) {
-      // Silently fail if audio doesn't work
-    }
-  };
-
-  // Toast notification system
-  const addToast = (message, type = 'info') => {
-    const id = Date.now();
-    const newToast = { id, message, type };
-    setToasts(prev => [...prev, newToast]);
-    
-    setTimeout(() => {
-      setToasts(prev => prev.filter(toast => toast.id !== id));
-    }, 3000);
-  };
-
-  // Copy to clipboard function
-  const copySessionCode = async () => {
-    try {
-      await navigator.clipboard.writeText(sessionCode);
-      setCopiedCode(true);
-      playSound('success');
-      setTimeout(() => setCopiedCode(false), 2000);
-    } catch (err) {
-      addToast('Failed to copy code', 'error');
-    }
-  };
-
-  // Animation helper for transitions
-  const transitionToState = (newState) => {
-    setIsAnimating(true);
-    setTimeout(() => {
-      setGameState(newState);
-      setIsAnimating(false);
-    }, 300);
-  };
-
-  // Get player color
-  const getPlayerColor = (playerIndex) => {
-    return playerColors[playerIndex % playerColors.length];
-  };
-
-  // Toast container component
-  const ToastContainer = () => (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
-      {toasts.map(toast => (
-        <div
-          key={toast.id}
-          className={`animate-slide-in bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 flex items-center space-x-3 transition-all ${
-            toast.type === 'error' ? 'border-l-4 border-red-500' : 
-            toast.type === 'success' ? 'border-l-4 border-green-500' : 
-            'border-l-4 border-blue-500'
-          }`}
-        >
-          {toast.type === 'success' && <Check className="w-5 h-5 text-green-500" />}
-          {toast.type === 'error' && <X className="w-5 h-5 text-red-500" />}
-          {toast.type === 'info' && <Bell className="w-5 h-5 text-blue-500" />}
-          <span className="text-gray-800 dark:text-gray-200">{toast.message}</span>
-        </div>
-      ))}
-    </div>
-  );
-
-  const initialSurveyQuestions = [
-    {
-      id: 'personality',
-      question: 'How would you describe yourself in social settings?',
-      options: ['Outgoing & Love being center of attention', 'Friendly but prefer smaller groups', 'Thoughtful listener who observes first', 'Quiet but warm up over time']
-    },
-    {
-      id: 'comfort_level',
-      question: 'In conversations, you prefer:',
-      options: ['Light, fun topics that make everyone laugh', 'Mix of light and meaningful discussions', 'Deep, personal conversations', 'Thought-provoking questions about life']
-    },
-    {
-      id: 'sharing_style',
-      question: 'When sharing personal things, you:',
-      options: ['Share openly and easily', 'Share when others share first', 'Prefer to listen more than share', 'Share deeply with close people only']
-    },
-    {
-      id: 'group_energy',
-      question: 'You contribute best to group conversations when:',
-      options: ['Everyone is laughing and having fun', 'There\'s a good mix of personalities', 'People are being real and authentic', 'The conversation has depth and meaning']
-    }
-  ];
-
-  const relationshipOptions = [
-    'Romantic partner/spouse',
-    'Close friend (know each other well)',
-    'Friend (hang out regularly)',
-    'Family member',
-    'Coworker/colleague', 
-    'Acquaintance (don\'t know well)',
-    'Just met/new friend'
-  ];
-
-  // Smart category recommendation based on group composition and survey answers
-  const recommendCategories = (players, relationships) => {
-    const intimacyScore = calculateGroupIntimacy(relationships);
-    const comfortLevel = getGroupComfortLevel(players);
-    const groupSize = players.length;
-
-    let recommended = [];
-
-    // Always include icebreakers for groups > 3 or low intimacy
-    if (groupSize > 3 || intimacyScore < 3) {
-      recommended.push('icebreakers');
-    }
-
-    // Add creative for mixed groups
-    if (groupSize > 2) {
-      recommended.push('creative');
-    }
-
-    // Add deep dive for close relationships and high comfort
-    if (intimacyScore >= 3 && comfortLevel >= 3) {
-      recommended.push('deep_dive');
-    }
-
-    // Add growth for couples or very close friends
-    if (intimacyScore >= 4 || (groupSize === 2 && intimacyScore >= 3)) {
-      recommended.push('growth');
-    }
-
-    // Only suggest spicy for very comfortable groups
-    if (intimacyScore >= 4 && comfortLevel >= 4 && groupSize <= 4) {
-      recommended.push('spicy');
-    }
-
-    return recommended;
-  };
-
-  const calculateGroupIntimacy = (relationships) => {
-    if (!relationships || Object.keys(relationships).length === 0) return 2;
-    
-    const intimacyMap = {
-      'Romantic partner/spouse': 5,
-      'Close friend (know each other well)': 4,
-      'Friend (hang out regularly)': 3,
-      'Family member': 4,
-      'Coworker/colleague': 2,
-      'Acquaintance (don\'t know well)': 1,
-      'Just met/new friend': 1
-    };
-
-    const scores = Object.values(relationships).map(rel => intimacyMap[rel] || 2);
-    return scores.reduce((a, b) => a + b, 0) / scores.length;
-  };
-
-  const getGroupComfortLevel = (players) => {
-    if (!players || players.length === 0) return 2;
-    
-    const comfortMap = {
-      'Light, fun topics that make everyone laugh': 2,
-      'Mix of light and meaningful discussions': 3,
-      'Deep, personal conversations': 4,
-      'Thought-provoking questions about life': 4
-    };
-
-    const scores = players
-      .filter(p => p.surveyAnswers?.comfort_level)
-      .map(p => comfortMap[p.surveyAnswers.comfort_level] || 2);
-    
-    if (scores.length === 0) return 2;
-    return scores.reduce((a, b) => a + b, 0) / scores.length;
-  };
-
-  // Enhanced question generation with history tracking
-  const generatePersonalizedQuestion = (players, surveyData, relationships, forceCategory = null) => {
-    let category = forceCategory;
-    
-    if (!category) {
-      // If no categories selected, pick one intelligently
-      if (selectedCategories.length === 0) {
-        const recommended = recommendCategories(players, relationships);
-        category = recommended[Math.floor(Math.random() * recommended.length)] || 'icebreakers';
-      } else {
-        // Pick from selected categories
-        category = selectedCategories[Math.floor(Math.random() * selectedCategories.length)];
-      }
-    }
-
-    const categoryQuestions = questionCategories[category]?.questions || questionCategories.icebreakers.questions;
-    
-    // Filter out recently asked questions
-    const recentQuestions = questionHistory.slice(-5).map(h => h.question);
-    const availableQuestions = categoryQuestions.filter(q => !recentQuestions.includes(q));
-    
-    // Pick from available questions, or from all if we've exhausted non-recent ones
-    const questionPool = availableQuestions.length > 0 ? availableQuestions : categoryQuestions;
-    const question = questionPool[Math.floor(Math.random() * questionPool.length)];
-    
-    setCurrentCategory(category);
-    return question;
-  };
-
-  // Firebase functions
-  const createFirebaseSession = async (sessionCode, hostPlayer) => {
-    try {
-      await setDoc(doc(db, 'sessions', sessionCode), {
-        hostId: hostPlayer.id,
-        players: [hostPlayer],
-        currentQuestion: '',
-        gameState: 'waiting',
-        selectedCategories: [],
-        currentTurnIndex: 0,
-        availableCategories: [],
-        usedCategories: [],
-        turnHistory: [],
-        categoryVotes: {},
-        createdAt: serverTimestamp()
-      });
-      return true;
-    } catch (error) {
-      console.error('Error creating session:', error);
-      addToast('Failed to create session', 'error');
-      return false;
-    }
-  };
-
-  const joinFirebaseSession = async (sessionCode, player) => {
-    try {
-      const sessionRef = doc(db, 'sessions', sessionCode);
-      const sessionSnap = await getDoc(sessionRef);
-      
-      if (sessionSnap.exists()) {
-        const sessionData = sessionSnap.data();
-        const updatedPlayers = [...sessionData.players, player];
-        
-        await updateDoc(sessionRef, {
-          players: updatedPlayers
-        });
-        
-        return sessionData;
-      } else {
-        throw new Error('Session not found');
-      }
-    } catch (error) {
-      console.error('Error joining session:', error);
-      addToast('Failed to join session', 'error');
-      return null;
-    }
-  };
-
-  const updateGameQuestion = async (sessionCode, question, category) => {
-    try {
-      // Add to question history
-      const newHistoryItem = {
-        question,
-        category,
-        askedBy: players[currentTurnIndex]?.name,
-        timestamp: Date.now()
-      };
-      
-      setQuestionHistory(prev => [...prev.slice(-4), newHistoryItem]);
-      
-      await updateDoc(doc(db, 'sessions', sessionCode), {
-        currentQuestion: question,
-        currentCategory: category,
-        gameState: 'playing'
-      });
-    } catch (error) {
-      console.error('Error updating question:', error);
-      addToast('Failed to update question', 'error');
-    }
-  };
-
-  const updateSessionCategories = async (sessionCode, categories) => {
-    try {
-      await updateDoc(doc(db, 'sessions', sessionCode), {
-        selectedCategories: categories
-      });
-    } catch (error) {
-      console.error('Error updating categories:', error);
-    }
-  };
-
-  const listenToSession = (sessionCode) => {
-    console.log('🚀 Setting up listener for session:', sessionCode);
-    
-    const sessionRef = doc(db, 'sessions', sessionCode);
-    
-    const unsubscribe = onSnapshot(sessionRef, (doc) => {
-      console.log('🔥 Listener triggered! Doc exists:', doc.exists());
-      
-      if (doc.exists()) {
-        const data = doc.data();
-        console.log('📊 Session data:', data);
-        
-        // Check for new players
-        const prevPlayerCount = players.length;
-        
-        // Update existing state
-        setPlayers([...data.players || []]);
-        setCurrentQuestion(data.currentQuestion || '');
-        setCurrentCategory(data.currentCategory || '');
-        setSelectedCategories([...data.selectedCategories || []]);
-        
-        // Update new turn-related state
-        setCurrentTurnIndex(data.currentTurnIndex || 0);
-        setAvailableCategories([...data.availableCategories || []]);
-        setUsedCategories([...data.usedCategories || []]);
-        setTurnHistory([...data.turnHistory || []]);
-        setCategoryVotes(data.categoryVotes || {});
-        
-        // Show toast for new players
-        if (data.players.length > prevPlayerCount && prevPlayerCount > 0) {
-          const newPlayer = data.players[data.players.length - 1];
-          addToast(`${newPlayer.name} joined the game!`, 'success');
-          playSound('join');
-        }
-        
-        // Handle game state transitions with animations
-        if (data.gameState === 'playing' && gameState !== 'playing') {
-          transitionToState('playing');
-        } else if (data.gameState === 'categoryPicking' && gameState !== 'categoryPicking') {
-          transitionToState('categoryPicking');
-        } else if (data.gameState === 'categoryVoting' && gameState !== 'categoryVoting') {
-          transitionToState('categoryVoting');
-        } else if (data.gameState === 'relationshipSurvey' && gameState !== 'relationshipSurvey') {
-          transitionToState('relationshipSurvey');
-        } else if (data.gameState === 'waitingForHost' && gameState !== 'waitingForHost') {
-          transitionToState('waitingForHost');
-        }
-      } else {
-        console.log('❌ Session document does not exist');
-      }
-    }, (error) => {
-      console.error('❌ Firebase listener error:', error);
-      addToast('Connection lost. Trying to reconnect...', 'error');
-    });
-    
-    // Store the unsubscribe function directly (not in state)
-    window.currentSessionListener = unsubscribe;
-    
-    return unsubscribe;
-  };
-
-  // Cleanup listener on unmount
-  useEffect(() => {
-    return () => {
-      if (window.currentSessionListener) {
-        console.log('🧹 Cleaning up listener');
-        window.currentSessionListener();
-        window.currentSessionListener = null;
-      }
-    };
-  }, []);
-
-  const handleSurveySubmit = () => {
-    if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
-      playSound('success');
-      transitionToState('createOrJoin');
-    }
-  };
-
-  const handleCreateSession = async () => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const hostPlayer = {
-      id: Date.now().toString(),
-      name: playerName,
-      isHost: true,
-      surveyAnswers,
-      joinedAt: new Date().toISOString(),
-      color: playerColors[0]
-    };
-    
-    const success = await createFirebaseSession(code, hostPlayer);
-    
-    if (success) {
-      setSessionCode(code);
-      setIsHost(true);
-      setPlayers([hostPlayer]);
-      playSound('success');
-      transitionToState('waitingRoom');
-      
-      // Add delay before listener
-      setTimeout(() => {
-        console.log('Starting listener after delay');
-        listenToSession(code);
-      }, 1000);
-    }
-  };
-
-  const handleJoinSession = async () => {
-    if (sessionCode.trim()) {
-      // Don't add player yet - just check if session exists
-      const sessionRef = doc(db, 'sessions', sessionCode.trim().toUpperCase());
-      const sessionSnap = await getDoc(sessionRef);
-      
-      if (sessionSnap.exists()) {
-        const sessionData = sessionSnap.data();
-        setPlayers(sessionData.players);
-        setSelectedCategories(sessionData.selectedCategories || []);
-        setSessionCode(sessionCode.trim().toUpperCase());
-        
-        playSound('success');
-        // Start listening to session updates
-        listenToSession(sessionCode.trim().toUpperCase());
-        
-        // Go to waiting room first, not relationship survey
-        transitionToState('waitingRoom');
-      } else {
-        addToast('Session not found. Please check the code.', 'error');
-      }
-    }
-  };
-
-  const handleRelationshipSurveySubmit = async () => {
-    // Don't create a new player - they already exist
-    // Just update with relationship data
-    try {
-      const sessionRef = doc(db, 'sessions', sessionCode);
-      const sessionSnap = await getDoc(sessionRef);
-      
-      if (sessionSnap.exists()) {
-        const sessionData = sessionSnap.data();
-        const updatedPlayers = sessionData.players.map(p => 
-          p.name === playerName 
-            ? { ...p, relationshipAnswers } 
-            : p
-        );
-        
-        await updateDoc(sessionRef, {
-          players: updatedPlayers
-        });
-        
-        // Check if all players have completed relationship survey
-        const allCompleted = updatedPlayers.every(p => p.relationshipAnswers);
-        
-        if (allCompleted) {
-          // Get the selected categories and start the game
-          const topCategories = sessionData.selectedCategories || [];
-          
-          // Move to category picking for first player
-          await updateDoc(sessionRef, {
-            gameState: 'categoryPicking',
-            currentTurnIndex: 0,
-            availableCategories: topCategories,
-            usedCategories: [],
-            turnHistory: []
-          });
-          playSound('success');
-          transitionToState('categoryPicking');
-        } else {
-          // Wait for others
-          transitionToState('waitingForOthers');
-        }
-      }
-    } catch (error) {
-      console.error('Error updating player data:', error);
-      addToast('Failed to submit survey', 'error');
-    }
-  };
-
-  const handleCategoryVote = async (selectedCats) => {
-    try {
-      const sessionRef = doc(db, 'sessions', sessionCode);
-      const sessionSnap = await getDoc(sessionRef);
-      
-      if (sessionSnap.exists()) {
-        const sessionData = sessionSnap.data();
-        const currentVotes = sessionData.categoryVotes || {};
-        
-        // Update votes for this player
-        currentVotes[playerName] = selectedCats;
-        
-        await updateDoc(sessionRef, {
-          categoryVotes: currentVotes
-        });
-        
-        setMyVotedCategories(selectedCats);
-        playSound('success');
-        
-        // Only check if all players have voted when there are multiple players
-        if (sessionData.players.length > 1) {
-          const allPlayersVoted = sessionData.players.every(player => 
-            currentVotes[player.name] && currentVotes[player.name].length > 0
-          );
-          
-          if (allPlayersVoted) {
-            // Move to waiting room automatically
-            await updateDoc(sessionRef, {
-              gameState: 'waitingForHost'
-            });
-            transitionToState('waitingForHost');
-          }
-        }
-        // If only one player (host), just stay in voting screen to show their votes
-      }
-    } catch (
+}
