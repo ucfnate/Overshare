@@ -61,9 +61,15 @@ export default function Page() {
   const [gameState, setGameState] = useState('welcome');
   const [mode, setMode] = useState('classic');
 
-  // identity + survey
+  // identity + survey (multiple-choice)
   const [playerName, setPlayerName] = useState('');
-  const [surveyAnswers, setSurveyAnswers] = useState({ vibe: 'balanced', topics: [], introvert: 'neutral' });
+  const [surveyAnswers, setSurveyAnswers] = useState({
+    relation: 'friends',          // friends | coworkers | family | mixed | new
+    familiarity: 'acquaintances', // just_met | acquaintances | close | very_close
+    tone: 'balanced',             // light | balanced | deep
+    spice: 'mild',                // mild | medium | hot (kept for future AI tuning)
+    prefCategories: ['icebreakers','creative'] // from library keys
+  });
 
   // session
   const [sessionCode, setSessionCode] = useState('');
@@ -108,7 +114,6 @@ export default function Page() {
     showToast._t = setTimeout(() => setNotification(null), 2400);
   };
 
-  // do NOT call AudioContext on every keystroke; only on explicit taps
   const toggleSound = () => setAudioEnabled(v => !v);
 
   /* ---------------------- Firestore subscription --------------------- */
@@ -139,8 +144,6 @@ export default function Page() {
         setSkipsUsedThisTurn(0);
       }
 
-      // Do not force a screen jump here; let host’s buttons set gameState.
-      // Only snap to waitingRoom if this is a brand new listener and the doc says so.
       if (gameState === 'createOrJoin' && data.gameState) setGameState(data.gameState);
     }, (e) => console.error('onSnapshot error', e));
 
@@ -183,6 +186,10 @@ export default function Page() {
     if (!playerName.trim()) return;
     const user = await ensureSignedIn();
     const uid = user?.uid;
+
+    // Requested debug line:
+    console.log('[create] uid:', uid);
+
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const hostPlayer = {
       id: uid,
@@ -494,7 +501,7 @@ export default function Page() {
 
   /* ------------------------------ Screens ----------------------------- */
 
-  // 1) Welcome
+  // 1) Welcome (split Quickstart / Classic, but still funnels through Survey)
   if (gameState === 'welcome') {
     return (
       <Frame title="Overshare">
@@ -502,79 +509,188 @@ export default function Page() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
             <MessageCircle className="w-8 h-8 text-white" />
           </div>
-          <p className="text-gray-100/90"></p>
-          <p className="text-gray-200"></p>
+          <p className="text-gray-600 dark:text-gray-300 mb-2">Let’s set you up</p>
+          <input
+            type="text"
+            inputMode="text"
+            autoComplete="name"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="Enter your name"
+            value={playerName}
+            onChange={(e)=>setPlayerName(e.target.value)}
+            onKeyDown={(e)=>e.stopPropagation()}
+            className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 mb-4"
+          />
         </div>
-        <input
-          type="text"
-          inputMode="text"
-          autoComplete="name"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder="Enter your name"
-          value={playerName}
-          onChange={(e)=>setPlayerName(e.target.value)}
-          onKeyDown={(e)=>e.stopPropagation()}
-          className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 mb-4"
-        />
+
         <button
           onClick={()=>{ if(!playerName.trim()) return; setGameState('survey'); }}
           className={`w-full ${BTN_PRIMARY}`}
         >
           Continue
         </button>
+
+        <div className="mt-6 text-center">
+          <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+            How do you want to play today?
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={()=>{ if(!playerName.trim()) return; setMode('quickstart'); setGameState('quickstart'); }}
+              className={BTN_SECONDARY}
+            >
+              Quickstart
+            </button>
+            <button
+              onClick={()=>{ if(!playerName.trim()) return; setGameState('createOrJoin'); }}
+              className={BTN_SECONDARY}
+            >
+              Classic
+            </button>
+          </div>
+        </div>
       </Frame>
     );
   }
 
-  // 2) Survey (quick + stable controls)
+  // 2) Survey (multiple-choice, all on one page)
   if (gameState === 'survey') {
-    const toggleTopic = (t) => {
-      setSurveyAnswers((prev) => {
-        const has = (prev.topics||[]).includes(t);
-        return { ...prev, topics: has ? prev.topics.filter(x=>x!==t) : [...(prev.topics||[]), t] };
+    const setField = (patch) => setSurveyAnswers(prev => ({ ...prev, ...patch }));
+
+    useEffect(() => {
+      setSurveyAnswers(prev => ({
+        relation: prev.relation || 'friends',
+        familiarity: prev.familiarity || 'acquaintances',
+        tone: prev.tone || 'balanced',
+        spice: prev.spice || 'mild',
+        prefCategories: (prev.prefCategories && prev.prefCategories.length ? prev.prefCategories : ['icebreakers','creative'].filter(k => CATEGORIES[k]).slice(0,2))
+      }));
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const togglePref = (k) => {
+      setSurveyAnswers(prev => {
+        const cur = new Set(prev.prefCategories || []);
+        cur.has(k) ? cur.delete(k) : cur.add(k);
+        const next = Array.from(cur);
+        if (next.length > 4) next.shift();
+        if (next.length < 1) next.push(k);
+        return { ...prev, prefCategories: next };
       });
     };
+
+    const RadioRow = ({name, value, options}) => (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {options.map(({val, label}) => (
+          <button
+            key={val}
+            onClick={()=>setField({ [name]: val })}
+            className={`p-2 rounded-xl border-2 ${value===val ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    );
+
+    const categoryEntries = Object.entries(CATEGORIES || {}).map(([key, cat]) => ({
+      key, label: cat?.name || key
+    }));
+
     return (
       <Frame title="Quick Survey">
-        <div className="space-y-4">
+        <div className="space-y-5">
+
           <div>
-            <label className="block text-sm mb-1 text-gray-600 dark:text-gray-300">Vibe</label>
-            <div className="grid grid-cols-3 gap-2">
-              {['light','balanced','deep'].map(v=>(
-                <button key={v} onClick={()=>setSurveyAnswers(s=>({...s, vibe:v}))}
-                  className={`p-2 rounded-xl border-2 ${surveyAnswers.vibe===v?'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900`}>
-                  {v}
-                </button>
-              ))}
-            </div>
+            <div className="text-sm mb-1 text-gray-600 dark:text-gray-300">How do you all know each other?</div>
+            <RadioRow
+              name="relation"
+              value={surveyAnswers.relation}
+              options={[
+                { val:'friends', label:'Friends' },
+                { val:'coworkers', label:'Co-workers' },
+                { val:'family', label:'Family' },
+                { val:'mixed', label:'Mixed' },
+                { val:'new', label:'New group' },
+              ]}
+            />
           </div>
+
           <div>
-            <label className="block text-sm mb-1 text-gray-600 dark:text-gray-300">Topics (optional)</label>
-            <div className="grid grid-cols-2 gap-2">
-              {['work','family','travel','relationships','sports','art'].map(t=>(
-                <button key={t} onClick={()=>toggleTopic(t)}
-                  className={`p-2 rounded-xl border-2 ${surveyAnswers.topics?.includes(t)?'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900 text-left`}>
-                  {t}
-                </button>
-              ))}
-            </div>
+            <div className="text-sm mb-1 text-gray-600 dark:text-gray-300">How familiar are folks?</div>
+            <RadioRow
+              name="familiarity"
+              value={surveyAnswers.familiarity}
+              options={[
+                { val:'just_met', label:'Just met' },
+                { val:'acquaintances', label:'Acquaintances' },
+                { val:'close', label:'Close friends' },
+                { val:'very_close', label:'Like family' },
+              ]}
+            />
           </div>
+
           <div>
-            <label className="block text-sm mb-1 text-gray-600 dark:text-gray-300">Social energy</label>
-            <div className="grid grid-cols-3 gap-2">
-              {['introvert','neutral','extrovert'].map(v=>(
-                <button key={v} onClick={()=>setSurveyAnswers(s=>({...s, introvert:v}))}
-                  className={`p-2 rounded-xl border-2 ${surveyAnswers.introvert===v?'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900`}>
-                  {v}
-                </button>
-              ))}
+            <div className="text-sm mb-1 text-gray-600 dark:text-gray-300">Question tone</div>
+            <RadioRow
+              name="tone"
+              value={surveyAnswers.tone}
+              options={[
+                { val:'light', label:'Light' },
+                { val:'balanced', label:'Balanced' },
+                { val:'deep', label:'Deep' },
+              ]}
+            />
+          </div>
+
+          <div>
+            <div className="text-sm mb-2 text-gray-600 dark:text-gray-300">Preferred categories (pick 2–4)</div>
+            <div className="grid grid-cols-1 gap-2">
+              {categoryEntries.map(({key, label}) => {
+                const active = (surveyAnswers.prefCategories || []).includes(key);
+                return (
+                  <button
+                    key={key}
+                    onClick={()=>togglePref(key)}
+                    className={`p-3 rounded-xl border-2 text-left ${active ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Selected: {(surveyAnswers.prefCategories || []).map(k => CATEGORIES[k]?.name || k).join(', ') || '—'}
             </div>
           </div>
         </div>
-        <div className="mt-5 space-y-3">
-          <button onClick={()=>setGameState('createOrJoin')} className={`w-full ${BTN_PRIMARY}`}>Multiplayer (Host / Join)</button>
-          <button onClick={()=>{ setMode('quickstart'); setGameState('quickstart'); }} className={`w-full ${BTN_SECONDARY}`}>Quickstart (Solo)</button>
+
+        <div className="mt-6 space-y-3">
+          <button
+            onClick={()=>setGameState('createOrJoin')}
+            className={`w-full ${BTN_PRIMARY}`}
+          >
+            Continue (Classic Multiplayer)
+          </button>
+
+          <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 text-center">
+            How do you want to play today?
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={()=>{ setMode('quickstart'); setGameState('quickstart'); }}
+              className={BTN_SECONDARY}
+            >
+              Quickstart
+            </button>
+            <button
+              onClick={()=>setGameState('createOrJoin')}
+              className={BTN_SECONDARY}
+            >
+              Classic
+            </button>
+          </div>
         </div>
       </Frame>
     );
@@ -597,7 +713,7 @@ export default function Page() {
               spellCheck={false}
               className="flex-1 p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900"
             />
-            <button onClick={handleJoinSession} className={`${BTN_SECONDARY}`}>Join</button>
+            <button onClick={handleJoinSession} className={BTN_SECONDARY}>Join</button>
           </div>
         </div>
       </Frame>
@@ -661,7 +777,7 @@ export default function Page() {
   if (gameState === 'categoryPicking') {
     const currentPlayer = players[currentTurnIndex] || players[0];
     const entries = (availableCategories||[]).map(k => [k, CATEGORIES[k]]).filter(([,v]) => !!v);
-    const canPick = isHost; // host-only per rules
+    const canPick = isHost; // host-only per current rules
     return (
       <Frame title="Category Picking" showBack>
         <p className="text-center text-sm text-gray-600 dark:text-gray-300 mb-3">Current player: <b>{currentPlayer?.name||'—'}</b></p>
@@ -689,7 +805,7 @@ export default function Page() {
     );
   }
 
-  // 8) Playing (routes to the active mode)
+  // 8) Playing (route per mode)
   if (gameState === 'playing') {
     if (mode === 'superlatives' && round) {
       return <SuperlativesScreen
@@ -857,7 +973,7 @@ export default function Page() {
               <input value={myAnswerDraft} onChange={(e)=>setMyAnswerDraft(e.target.value)} placeholder="(Optional) Type your answer..."
                 onKeyDown={(e)=>e.stopPropagation()}
                 className="flex-1 p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900" />
-              <button onClick={submitMyAnswer} className={`${BTN_SECONDARY}`}>Send</button>
+              <button onClick={submitMyAnswer} className={BTN_SECONDARY}>Send</button>
             </div>
             {round?.answers && Object.keys(round.answers).length > 0 && (
               <p className="text-xs text-gray-500 dark:text-gray-300 mt-2">
@@ -1117,4 +1233,3 @@ function FillBlankScreen({ round, players, isHost, onSubmit, onStartVoting, onVo
     </FrameLocal>
   );
 }
-
