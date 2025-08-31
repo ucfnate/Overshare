@@ -74,7 +74,7 @@ export default function Overshare() {
   /* =========================
      State
   ========================= */
-  const [gameState, setGameState] = useState('welcome'); // welcome -> modeMenu -> ...
+  const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
@@ -83,7 +83,7 @@ export default function Overshare() {
 
   // Core shared state
   const [players, setPlayers] = useState([]);
-  const [surveyAnswers, setSurveyAnswers] = useState({}); // reserved for Classic initial Qs
+  const [surveyAnswers, setSurveyAnswers] = useState({});
   const [relationshipAnswers, setRelationshipAnswers] = useState({});
 
   const [currentQuestion, setCurrentQuestion] = useState('');
@@ -111,12 +111,13 @@ export default function Overshare() {
   const [mode, setMode] = useState(null); // 'classic' | 'party' | 'solo'
   const [partyPhase, setPartyPhase] = useState(null); // 'prompt' | 'collect' | 'results'
   const [partyRoundType, setPartyRoundType] = useState(null); // 'superlatives' | 'fillin' | 'nhie'
-  const [scores, setScores] = useState({}); // {playerId: number}
-  const [lives, setLives] = useState({});  // {playerId: number}, NHIE
+  const [scores, setScores] = useState({});
+  const [lives, setLives] = useState({});
   const [turnMasterId, setTurnMasterId] = useState(null);
   const [currentPromptId, setCurrentPromptId] = useState(null);
   const [submissions, setSubmissions] = useState([]); // [{playerId, text}]
-  const [votes, setVotes] = useState([]); // [{voterId, targetPlayerId? , submissionIndex?}]
+  const [votes, setVotes] = useState([]); // see per-mode usage
+  const [fillinDone, setFillinDone] = useState({}); // {playerId: true}
 
   // SOLO mode (local only)
   const [soloCategory, setSoloCategory] = useState('');
@@ -129,6 +130,7 @@ export default function Overshare() {
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
+  const lastAnnounceTsRef = useRef(0);
 
   /* =========================
      Init: device id + saved name
@@ -248,7 +250,7 @@ export default function Overshare() {
     []
   );
 
-  // Initial questions (moved to Classic after lobby)
+  // Initial questions (Classic — moved after lobby)
   const initialQuestions = [
     {
       id: 'personality',
@@ -353,8 +355,8 @@ export default function Overshare() {
         turnHistory: [],
         categoryVotes: {},
         // mode fields
-        mode: null,               // 'classic' or 'party' (null until host chooses)
-        gameState: 'waitingRoom', // classic uses existing states
+        mode: null,
+        gameState: 'waitingRoom',
         partyPhase: null,
         partyRoundType: null,
         scores: {},
@@ -363,6 +365,8 @@ export default function Overshare() {
         currentPromptId: null,
         submissions: [],
         votes: [],
+        fillinDone: {},         // NEW: {playerId: true}
+        announcement: null,     // NEW: {ts, message, emoji}
         createdAt: serverTimestamp()
       });
       return true;
@@ -430,14 +434,20 @@ export default function Overshare() {
           setCurrentPromptId(data.currentPromptId || null);
           setSubmissions(data.submissions || []);
           setVotes(data.votes || []);
+          setFillinDone(data.fillinDone || {});
+
+          // Announcements → toast once
+          const ann = data.announcement;
+          if (ann && ann.ts && ann.ts > (lastAnnounceTsRef.current || 0)) {
+            showNotification(ann.message, ann.emoji || '🎉');
+            lastAnnounceTsRef.current = ann.ts;
+          }
 
           // gameState
           const incoming = data.gameState || 'waitingRoom';
           if (incoming !== gameState) setGameState(incoming);
         },
-        (error) => {
-          console.error('Firebase listener error:', error);
-        }
+        (error) => { console.error('Firebase listener error:', error); }
       );
 
       unsubscribeRef.current = unsubscribe;
@@ -595,7 +605,7 @@ export default function Overshare() {
   };
 
   /* =========================
-     Category Voting & Classic play (unchanged)
+     Category Voting & Classic play
   ========================= */
   const handleCategoryVote = async (selectedCats) => {
     if (!sessionCode) return;
@@ -760,7 +770,6 @@ export default function Overshare() {
   };
 
   const pickNextPartyRoundType = (lastType = null) => {
-    // 1:1:1 ratio → simple random across three types (avoid repeating if possible)
     const types = ['superlatives', 'fillin', 'nhie'];
     let pool = types;
     if (lastType) pool = types.filter(t => t !== lastType);
@@ -786,23 +795,56 @@ export default function Overshare() {
       partyPhase: 'prompt',
       currentPromptId: prompt,
       submissions: [],
-      votes: []
+      votes: [],
+      fillinDone: {}, // reset per round
+      announcement: null
     });
 
     setPartyRoundType(type); setPartyPhase('prompt'); setCurrentPromptId(prompt);
-    setSubmissions([]); setVotes([]);
+    setSubmissions([]); setVotes([]); setFillinDone({});
   };
+
+  // —— FILL-IN: up to 2 answers, no Turn Master submissions, “I’m done” support
+  const countMyFillins = useCallback(() => {
+    return (submissions || []).filter(s => s.playerId === myUid).length;
+  }, [submissions, myUid]);
 
   const submitFillIn = async (text) => {
     if (!sessionCode) return;
     if (!text.trim()) return;
+    if (myUid === turnMasterId) return; // Turn Master cannot submit
     const sessionRef = doc(db, 'sessions', sessionCode);
     const fresh = (await getDoc(sessionRef)).data() || {};
-    const existing = (fresh.submissions || []).filter(s => s.playerId !== myUid);
-    const next = [...existing, { playerId: myUid, text: text.trim() }];
+    const already = (fresh.submissions || []).filter(s => s.playerId === myUid).length;
+    if (already >= 2) return; // max 2
+    const next = [...(fresh.submissions || []), { playerId: myUid, text: text.trim() }];
     await updateDoc(sessionRef, { submissions: next });
   };
 
+  const markFillInDone = async () => {
+    if (!sessionCode) return;
+    if (myUid === turnMasterId) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    const curr = fresh.fillinDone || {};
+    if (curr[myUid]) return;
+    await updateDoc(sessionRef, { fillinDone: { ...curr, [myUid]: true } });
+  };
+
+  // Auto-reveal when everyone (except Turn Master) is done or at 2 subs
+  useEffect(() => {
+    if (!isHost) return;
+    if (mode !== 'party' || partyRoundType !== 'fillin' || partyPhase !== 'collect') return;
+    const eligible = (players || []).filter(p => p.id !== turnMasterId);
+    const subBy = (pid) => (submissions || []).filter(s => s.playerId === pid).length;
+    const ready = eligible.every(p => (subBy(p.id) >= 2) || (fillinDone || {})[p.id]);
+    if (ready && sessionCode) {
+      updateDoc(doc(db,'sessions',sessionCode), { partyPhase: 'results' });
+      setPartyPhase('results');
+    }
+  }, [isHost, mode, partyRoundType, partyPhase, players, turnMasterId, submissions, fillinDone, sessionCode]);
+
+  // —— SUPERLATIVES: everyone votes for a player
   const voteForSuperlative = async (targetPlayerId) => {
     if (!sessionCode) return;
     const sessionRef = doc(db, 'sessions', sessionCode);
@@ -812,14 +854,35 @@ export default function Overshare() {
     await updateDoc(sessionRef, { votes: next });
   };
 
+  // —— FILL-IN: Turn Master picks favorite → award immediately + Next prompt
   const voteForFillIn = async (submissionIndex) => {
-    // Only Turn Master selects winner
-    if (turnMasterId !== myUid) return;
+    if (turnMasterId !== myUid) return; // only TM
+    if (!sessionCode) return;
     const sessionRef = doc(db, 'sessions', sessionCode);
+
     const fresh = (await getDoc(sessionRef)).data() || {};
-    await updateDoc(sessionRef, { votes: [{ voterId: myUid, submissionIndex }] });
+    const subms = fresh.submissions || [];
+    const pick = subms[submissionIndex];
+    if (!pick) return;
+    const winnerId = pick.playerId;
+
+    // Update scores & next Turn Master
+    const nextScores = { ...(fresh.scores || {}) };
+    nextScores[winnerId] = (nextScores[winnerId] || 0) + 1;
+
+    const turnMsg = `${(players.find(p=>p.id===myUid)?.name)||'Someone'} picked your answer — it's your turn!`;
+
+    await updateDoc(sessionRef, {
+      scores: nextScores,
+      turnMasterId: winnerId,
+      announcement: { ts: Date.now(), message: turnMsg, emoji: '⭐' }
+    });
+
+    // Immediately advance to next prompt (no extra confirm)
+    await startNextPartyPrompt();
   };
 
+  // —— NHIE: store HAVE/HAVENT as submissionIndex 1/0, tally via host button
   const tallyAndAdvanceParty = async () => {
     if (!sessionCode) return;
     const sessionRef = doc(db, 'sessions', sessionCode);
@@ -831,65 +894,48 @@ export default function Overshare() {
     let nextTurnMaster = fresh.turnMasterId;
 
     if (type === 'superlatives') {
-      // Count votes → max
       const counts = {};
       (fresh.votes || []).forEach(v => { if (v.targetPlayerId) counts[v.targetPlayerId] = (counts[v.targetPlayerId] || 0) + 1; });
       const ranked = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
       if (ranked.length > 0) {
-        // break ties randomly among top
         const topScore = ranked[0][1];
         const topIds = ranked.filter(([_,c])=>c===topScore).map(([pid])=>pid);
         const winnerId = topIds[Math.floor(Math.random()*topIds.length)];
         nextScores[winnerId] = (nextScores[winnerId] || 0) + 1;
+        await updateDoc(sessionRef, {
+          scores: nextScores,
+          announcement: { ts: Date.now(), message: `${(players.find(p=>p.id===winnerId)?.name)||'Someone'} wins the round!`, emoji:'🏆' }
+        });
       }
-    }
-
-    if (type === 'fillin') {
-      // Turn Master picks exactly one submission
-      const subms = fresh.submissions || [];
-      const v = (fresh.votes || [])[0];
-      if (v && typeof v.submissionIndex === 'number' && subms[v.submissionIndex]) {
-        const winnerId = subms[v.submissionIndex].playerId;
-        nextScores[winnerId] = (nextScores[winnerId] || 0) + 1;
-        nextTurnMaster = winnerId; // winner becomes next turn master
-      }
+      await startNextPartyPrompt();
+      return;
     }
 
     if (type === 'nhie') {
-      // Everyone taps I Have / I Haven't via votes: we’ll store as {voterId, targetPlayerId:'HAVE'|'HAVENT'}
-      // For simplicity, we used votes as {voterId, submissionIndex: 1 for HAVE, 0 for HAVENT}
       const vts = fresh.votes || [];
       vts.forEach(v => {
         if (v.submissionIndex === 1) { // I HAVE
           nextLives[v.voterId] = Math.max(0, (nextLives[v.voterId] ?? 10) - 1);
         }
       });
-      // Alternative A: if only one player has lives > 0, award +3 and reset lives
       const alive = Object.entries(nextLives).filter(([_,L]) => L > 0).map(([pid])=>pid);
       if (alive.length === 1) {
         const lastId = alive[0];
         nextScores[lastId] = (nextScores[lastId] || 0) + 3;
-        // Reset for next NHIE cycle
         const resetLives = { ...nextLives };
         Object.keys(resetLives).forEach(pid => { resetLives[pid] = 10; });
         nextLives = resetLives;
-        showNotification('Last standing in NHIE! +3 points awarded.', '🏆');
+        await updateDoc(sessionRef, {
+          scores: nextScores,
+          lives: nextLives,
+          announcement: { ts: Date.now(), message: `${(players.find(p=>p.id===lastId)?.name)||'Someone'} is last standing in NHIE! (+3)`, emoji:'👑' }
+        });
+      } else {
+        await updateDoc(sessionRef, { lives: nextLives });
       }
+      await startNextPartyPrompt();
+      return;
     }
-
-    await updateDoc(sessionRef, {
-      scores: nextScores,
-      lives: nextLives,
-      turnMasterId: nextTurnMaster,
-      partyPhase: 'results'
-    });
-
-    setScores(nextScores); setLives(nextLives); setTurnMasterId(nextTurnMaster);
-    setPartyPhase('results');
-  };
-
-  const continuePartyAfterResults = async () => {
-    await startNextPartyPrompt();
   };
 
   /* =========================
@@ -1320,7 +1366,6 @@ export default function Overshare() {
                     if (!canParty) return;
                     try { playSound('click'); } catch {}
                     const sessionRef = doc(db, 'sessions', sessionCode);
-                    // initialize scores/lives/turnMaster and jump into party
                     await updateDoc(sessionRef, { mode: 'party', gameState: 'party', partyPhase: null, partyRoundType: null });
                     setMode('party'); setGameState('party');
                     await initPartyIfNeeded();
@@ -1385,10 +1430,7 @@ export default function Overshare() {
             {q.options.map((opt, i) => (
               <button
                 key={`init-${q.id}-${i}`}
-                onClick={() => {
-                  try { playSound('click'); } catch {}
-                  setSurveyAnswers(prev => ({ ...prev, [q.id]: opt }));
-                }}
+                onClick={() => { try { playSound('click'); } catch {} setSurveyAnswers(prev => ({ ...prev, [q.id]: opt })); }}
                 className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all"
               >
                 {opt}
@@ -1401,7 +1443,7 @@ export default function Overshare() {
   }
 
   /* =========================
-     Classic — Relationship Survey (unchanged)
+     Classic — Relationship Survey
   ========================= */
   if (gameState === 'relationshipSurvey' && mode === 'classic') {
     const otherPlayers = (players || []).filter((p) => p?.id !== myUid);
@@ -1535,7 +1577,7 @@ export default function Overshare() {
     );
   }
 
-  // Waiting for Host — Classic → relationshipSurvey or categoryPicking
+  // Waiting for Host — Classic start
   if (gameState === 'waitingForHost' && mode === 'classic') {
     const voteResults = {};
     Object.values(categoryVotes || {}).forEach((votes) => { (votes || []).forEach((cat) => { voteResults[cat] = (voteResults[cat] || 0) + 1; }); });
@@ -1696,10 +1738,17 @@ export default function Overshare() {
   if (gameState === 'party' && mode === 'party') {
     const amHost = myUid && hostId && myUid === hostId;
     const me = players.find(p=>p.id===myUid);
+    const myFillinCount = (submissions || []).filter(s => s.playerId === myUid).length;
+    const iAmTM = turnMasterId === myUid;
 
-    // helpers for rendering
     const playerNameById = (pid) => (players.find(p=>p.id===pid)?.name) || '—';
-    const submissionsAnon = submissions.map((s, i) => ({ label: String.fromCharCode(65 + i), text: s.text, pid: s.playerId }));
+    const submissionsAnon = (submissions || []).map((s, i) => ({ label: String.fromCharCode(65 + i), text: s.text, pid: s.playerId }));
+
+    const PromptCard = () => (
+      <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
+        <p className="text-lg leading-relaxed">{currentPromptId}</p>
+      </div>
+    );
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 p-4 flex items-center justify-center">
@@ -1708,7 +1757,7 @@ export default function Overshare() {
 
         <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           {/* Header */}
-          <div className="mb-4 text-center">
+          <div className="mb-3 text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 dark:bg-gray-700/50 border border-white/30 dark:border-gray-600 text-sm text-white">
               <Swords className="w-4 h-4" /> Party Mode
             </div>
@@ -1724,28 +1773,25 @@ export default function Overshare() {
             )}
           </div>
 
-          {/* PROMPT */}
+          {/* PROMPT (always visible) */}
+          {currentPromptId && <PromptCard />}
+
+          {/* PHASE: PROMPT */}
           {partyPhase === 'prompt' && (
             <div className="space-y-6">
-              <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400">
-                <p className="text-lg leading-relaxed">{currentPromptId}</p>
-              </div>
-
               {partyRoundType === 'superlatives' && (
                 <div className="text-sm text-gray-600 dark:text-gray-300">
-                  Everyone: tap who fits this best on the next screen.
+                  Everyone: you’ll vote who fits this best.
                 </div>
               )}
-
               {partyRoundType === 'fillin' && (
                 <div className="text-sm text-gray-600 dark:text-gray-300">
-                  Everyone: write a short answer. The Turn Master will pick a winner (anonymous).
+                  Everyone (except Turn Master): submit up to <b>2</b> short answers. You can tap “I’m done” if you only have one.
                 </div>
               )}
-
               {partyRoundType === 'nhie' && (
                 <div className="text-sm text-gray-600 dark:text-gray-300">
-                  Tap “I Have” or “I Haven’t”. Lives remaining are shown after each NHIE round.
+                  Tap “I Have” or “I Haven’t”. Lives change after each round.
                 </div>
               )}
 
@@ -1762,10 +1808,9 @@ export default function Overshare() {
             </div>
           )}
 
-          {/* COLLECT */}
+          {/* PHASE: COLLECT */}
           {partyPhase === 'collect' && (
             <div className="space-y-6">
-              {/* Superlatives: pick a player */}
               {partyRoundType === 'superlatives' && (
                 <>
                   <p className="text-gray-700 dark:text-gray-200">Vote for who fits this prompt best:</p>
@@ -1780,7 +1825,7 @@ export default function Overshare() {
                       </button>
                     ))}
                   </div>
-                  {amHost && (
+                  {isHost && (
                     <button
                       onClick={tallyAndAdvanceParty}
                       className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
@@ -1791,26 +1836,30 @@ export default function Overshare() {
                 </>
               )}
 
-              {/* Fill-in: anonymous write-ins */}
               {partyRoundType === 'fillin' && (
                 <>
-                  <FillInEntry onSubmit={submitFillIn} />
-                  {amHost && (
-                    <button
-                      onClick={async () => {
-                        // move to results selection screen for Turn Master
-                        await updateDoc(doc(db,'sessions',sessionCode), { partyPhase: 'results' });
-                        setPartyPhase('results');
-                      }}
-                      className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
-                    >
-                      Reveal Answers
-                    </button>
+                  {iAmTM ? (
+                    <div className="text-center text-gray-700 dark:text-gray-200">
+                      <LoadingSpinner />
+                      <p className="mt-3">Waiting for answers…</p>
+                    </div>
+                  ) : (
+                    <FillInEntry
+                      disabled={myFillinCount >= 2 || (fillinDone || {})[myUid]}
+                      count={myFillinCount}
+                      onSubmit={submitFillIn}
+                      onDone={markFillInDone}
+                    />
+                  )}
+
+                  {isHost && (
+                    <div className="text-center text-sm text-gray-600 dark:text-gray-300">
+                      Submissions: {(submissions||[]).length} • Done: {Object.keys(fillinDone||{}).length}
+                    </div>
                   )}
                 </>
               )}
 
-              {/* NHIE: I Have / I Haven't */}
               {partyRoundType === 'nhie' && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
@@ -1819,7 +1868,6 @@ export default function Overshare() {
                         const sessionRef = doc(db,'sessions',sessionCode);
                         const fresh = (await getDoc(sessionRef)).data() || {};
                         const existing = (fresh.votes || []).filter(v => v.voterId !== myUid);
-                        // submissionIndex: 1 = HAVE, 0 = HAVENT
                         const next = [...existing, { voterId: myUid, submissionIndex: 1 }];
                         await updateDoc(sessionRef, { votes: next });
                       }}
@@ -1840,7 +1888,7 @@ export default function Overshare() {
                       I Haven’t
                     </button>
                   </div>
-                  {amHost && (
+                  {isHost && (
                     <button
                       onClick={tallyAndAdvanceParty}
                       className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
@@ -1853,7 +1901,7 @@ export default function Overshare() {
             </div>
           )}
 
-          {/* RESULTS */}
+          {/* PHASE: RESULTS */}
           {partyPhase === 'results' && (
             <div className="space-y-6">
               {partyRoundType === 'superlatives' && (
@@ -1869,9 +1917,9 @@ export default function Overshare() {
                       );
                     })}
                   </div>
-                  {amHost && (
+                  {isHost && (
                     <button
-                      onClick={continuePartyAfterResults}
+                      onClick={tallyAndAdvanceParty}
                       className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
                     >
                       Next Round
@@ -1887,22 +1935,15 @@ export default function Overshare() {
                     {submissionsAnon.map((s, i) => (
                       <button
                         key={i}
-                        onClick={() => voteForFillIn(i)}
-                        disabled={turnMasterId !== myUid}
-                        className={`w-full p-4 rounded-xl border-2 ${turnMasterId === myUid ? 'hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20' : 'opacity-60 cursor-not-allowed'} border-gray-200 dark:border-gray-600 text-left`}
+                        onClick={() => voteForFillIn(i)}      // instant award + next prompt
+                        disabled={!iAmTM}
+                        className={`w-full p-4 rounded-xl border-2 ${iAmTM ? 'hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20' : 'opacity-60 cursor-not-allowed'} border-gray-200 dark:border-gray-600 text-left`}
                       >
                         <span className="font-mono mr-2">{s.label}.</span> {s.text}
                       </button>
                     ))}
                   </div>
-                  {amHost && (
-                    <button
-                      onClick={tallyAndAdvanceParty}
-                      className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
-                    >
-                      Confirm Winner
-                    </button>
-                  )}
+                  {!iAmTM && <p className="text-sm text-gray-500 dark:text-gray-400 text-center mt-2">Waiting for {playerNameById(turnMasterId)} to choose…</p>}
                 </>
               )}
 
@@ -1916,9 +1957,9 @@ export default function Overshare() {
                       </div>
                     ))}
                   </div>
-                  {amHost && (
+                  {isHost && (
                     <button
-                      onClick={continuePartyAfterResults}
+                      onClick={startNextPartyPrompt}
                       className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
                     >
                       Next Round
@@ -1942,23 +1983,40 @@ export default function Overshare() {
 /* =========================
    Inline components
 ========================= */
-function FillInEntry({ onSubmit }) {
+function FillInEntry({ onSubmit, onDone, disabled, count }) {
   const [val, setVal] = useState('');
+  const canSubmit = !disabled && val.trim().length > 0 && count < 2;
+
   return (
     <div>
+      <div className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+        Submit up to <b>2</b> answers. <span className="ml-1">({count}/2 used)</span>
+      </div>
       <textarea
         value={val}
         onChange={(e)=>setVal(e.target.value)}
         placeholder="Write your short answer…"
         rows={3}
-        className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none bg-white dark:bg-gray-900"
+        disabled={disabled}
+        className={`w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none bg-white dark:bg-gray-900 ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
       />
-      <button
-        onClick={() => { if (val.trim()) { onSubmit(val.trim()); setVal(''); } }}
-        className="w-full mt-2 bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-2 px-4 rounded-xl font-semibold hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all"
-      >
-        Submit
-      </button>
+      <div className="flex items-center gap-2 mt-2">
+        <button
+          onClick={() => { if (canSubmit) { onSubmit(val.trim()); setVal(''); } }}
+          disabled={!canSubmit}
+          className="flex-1 bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-2 px-4 rounded-xl font-semibold hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Submit
+        </button>
+        <button
+          onClick={() => onDone()}
+          disabled={disabled || count === 0}
+          className="px-3 py-2 rounded-xl border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Tap if you’re out of ideas"
+        >
+          I’m done
+        </button>
+      </div>
     </div>
   );
 }
