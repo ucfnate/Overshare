@@ -10,6 +10,7 @@ import { db, auth, ensureSignedIn } from '../lib/firebase';
 import {
   doc, setDoc, getDoc, updateDoc, onSnapshot, serverTimestamp, arrayUnion
 } from 'firebase/firestore';
+import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 import * as QLIB from '../lib/questionCategories';
 
@@ -63,11 +64,14 @@ export default function Page() {
 
   // identity + survey (multiple-choice)
   const [playerName, setPlayerName] = useState('');
+  const nameRef = useRef(null);       // <-- make name input uncontrolled
+  const codeRef = useRef(null);       // <-- make join code uncontrolled
+
   const [surveyAnswers, setSurveyAnswers] = useState({
     relation: 'friends',          // friends | coworkers | family | mixed | new
     familiarity: 'acquaintances', // just_met | acquaintances | close | very_close
     tone: 'balanced',             // light | balanced | deep
-    spice: 'mild',                // mild | medium | hot (kept for future AI tuning)
+    spice: 'mild',                // mild | medium | hot (future AI tuning)
     prefCategories: ['icebreakers','creative'] // from library keys
   });
 
@@ -108,6 +112,17 @@ export default function Page() {
   const prevTurnIdxRef = useRef(0);
 
   /* ----------------------------- helpers ----------------------------- */
+  useEffect(() => {
+    // hydrate name from localStorage if present
+    try {
+      const saved = localStorage.getItem('overshare:name');
+      if (saved) {
+        setPlayerName(saved);
+        if (nameRef.current) nameRef.current.value = saved;
+      }
+    } catch {}
+  }, []);
+
   const showToast = (message, emoji = '🎉') => {
     setNotification({ message, emoji });
     clearTimeout(showToast._t);
@@ -158,7 +173,7 @@ export default function Page() {
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
-        hostId: hostPlayer.id,
+        hostId: hostPlayer.id || null,
         players: [hostPlayer],
         currentQuestion: '',
         currentCategory: '',
@@ -177,29 +192,54 @@ export default function Page() {
       });
       return true;
     } catch (err) {
-      console.error('create session error:', err.code, err.message);
+      console.error('create session error:', err?.code, err?.message);
+      alert(`Create failed: ${err?.code || 'unknown'} — ${err?.message || ''}`); // <-- bubble up exact reason
       return false;
     }
   };
 
+  const forceAnonSignin = async () => {
+    try {
+      const cred = await signInAnonymously(auth);
+      return cred?.user || auth.currentUser || null;
+    } catch (e) {
+      return new Promise((resolve) => {
+        const t = setTimeout(() => { unsub(); resolve(auth.currentUser || null); }, 5000);
+        const unsub = onAuthStateChanged(auth, (u) => { clearTimeout(t); unsub(); resolve(u || null); });
+      });
+    }
+  };
+
   const handleCreateSession = async () => {
-    if (!playerName.trim()) return;
-    const user = await ensureSignedIn();
-    const uid = user?.uid;
+    // read from uncontrolled ref to avoid input focus issues
+    const enteredName = (nameRef.current?.value || '').trim();
+    if (!enteredName) return;
+
+    setPlayerName(enteredName);
+    try { localStorage.setItem('overshare:name', enteredName); } catch {}
+
+    // ensure auth
+    let user = await ensureSignedIn();
+    let uid = user?.uid;
+    if (!uid) {
+      user = await forceAnonSignin();
+      uid = user?.uid;
+    }
 
     // Requested debug line:
     console.log('[create] uid:', uid);
 
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const hostPlayer = {
-      id: uid,
-      name: playerName,
+      id: uid || `guest_${Date.now()}`, // still create even if rules are open
+      name: enteredName,
       isHost: true,
       surveyAnswers,
       joinedAt: new Date().toISOString(),
     };
     const ok = await createFirebaseSession(code, hostPlayer);
-    if (!ok) { alert('Failed to create session. Check auth + rules.'); return; }
+    if (!ok) return;
+
     setSessionCode(code);
     setIsHost(true);
     setPlayers([hostPlayer]);
@@ -208,12 +248,17 @@ export default function Page() {
   };
 
   const handleJoinSession = async () => {
-    if (!playerName.trim() || !sessionCode.trim()) return;
+    const enteredName = (nameRef.current?.value || '').trim();
+    const enteredCode = (codeRef.current?.value || '').trim().toUpperCase();
+    if (!enteredName || !enteredCode) return;
+
+    setPlayerName(enteredName);
+    try { localStorage.setItem('overshare:name', enteredName); } catch {}
+
     const user = await ensureSignedIn();
     const uid = user?.uid;
 
-    const code = sessionCode.trim().toUpperCase();
-    const sessionRef = doc(db, 'sessions', code);
+    const sessionRef = doc(db, 'sessions', enteredCode);
     const snap = await getDoc(sessionRef);
     if (!snap.exists()) { alert('Session not found.'); return; }
     const data = snap.data() || {};
@@ -221,8 +266,8 @@ export default function Page() {
 
     if (!alreadyIn) {
       const newPlayer = {
-        id: uid,
-        name: playerName,
+        id: uid || `guest_${Date.now()}`,
+        name: enteredName,
         isHost: false,
         surveyAnswers,
         joinedAt: new Date().toISOString(),
@@ -238,10 +283,10 @@ export default function Page() {
     }
 
     setPlayers((await getDoc(sessionRef)).data().players || []);
-    setSessionCode(code);
+    setSessionCode(enteredCode);
     setIsHost(false);
     setGameState('waitingRoom');
-    listenToSession(code);
+    listenToSession(enteredCode);
   };
 
   /* -------------------- voting & category picking -------------------- */
@@ -501,7 +546,7 @@ export default function Page() {
 
   /* ------------------------------ Screens ----------------------------- */
 
-  // 1) Welcome (split Quickstart / Classic, but still funnels through Survey)
+  // 1) Welcome (split Quickstart / Classic, survey-first, name input is UNCONTROLLED)
   if (gameState === 'welcome') {
     return (
       <Frame title="Overshare">
@@ -511,21 +556,20 @@ export default function Page() {
           </div>
           <p className="text-gray-600 dark:text-gray-300 mb-2">Let’s set you up</p>
           <input
+            ref={nameRef}
             type="text"
             inputMode="text"
             autoComplete="name"
             autoCorrect="off"
             spellCheck={false}
             placeholder="Enter your name"
-            value={playerName}
-            onChange={(e)=>setPlayerName(e.target.value)}
-            onKeyDown={(e)=>e.stopPropagation()}
+            defaultValue={playerName}
             className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 mb-4"
           />
         </div>
 
         <button
-          onClick={()=>{ if(!playerName.trim()) return; setGameState('survey'); }}
+          onClick={()=>{ const v=(nameRef.current?.value||'').trim(); if(!v) return; setGameState('survey'); }}
           className={`w-full ${BTN_PRIMARY}`}
         >
           Continue
@@ -537,13 +581,13 @@ export default function Page() {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={()=>{ if(!playerName.trim()) return; setMode('quickstart'); setGameState('quickstart'); }}
+              onClick={()=>{ const v=(nameRef.current?.value||'').trim(); if(!v) return; setMode('quickstart'); setGameState('quickstart'); }}
               className={BTN_SECONDARY}
             >
               Quickstart
             </button>
             <button
-              onClick={()=>{ if(!playerName.trim()) return; setGameState('createOrJoin'); }}
+              onClick={()=>{ const v=(nameRef.current?.value||'').trim(); if(!v) return; setGameState('createOrJoin'); }}
               className={BTN_SECONDARY}
             >
               Classic
@@ -601,7 +645,6 @@ export default function Page() {
     return (
       <Frame title="Quick Survey">
         <div className="space-y-5">
-
           <div>
             <div className="text-sm mb-1 text-gray-600 dark:text-gray-300">How do you all know each other?</div>
             <RadioRow
@@ -704,9 +747,7 @@ export default function Page() {
           <button onClick={handleCreateSession} className={`w-full ${BTN_PRIMARY}`}>Create Game</button>
           <div className="flex gap-2">
             <input
-              value={sessionCode}
-              onChange={(e)=>setSessionCode(e.target.value.toUpperCase())}
-              onKeyDown={(e)=>e.stopPropagation()}
+              ref={codeRef}
               placeholder="Enter code"
               inputMode="text"
               autoCorrect="off"
@@ -957,7 +998,6 @@ export default function Page() {
             <div className="mb-4">
               <div className="space-y-2">
                 <textarea rows={2} value={questionDraft} onChange={(e)=>setQuestionDraft(e.target.value)}
-                  onKeyDown={(e)=>e.stopPropagation()}
                   className="w-full p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900" placeholder="(Optional) Propose a custom question..." />
                 <div className="flex gap-2">
                   <button onClick={submitQuestionWriteIn} className={`flex-1 ${BTN_SECONDARY}`}>
@@ -971,7 +1011,6 @@ export default function Page() {
           <div className="mb-4">
             <div className="flex gap-2">
               <input value={myAnswerDraft} onChange={(e)=>setMyAnswerDraft(e.target.value)} placeholder="(Optional) Type your answer..."
-                onKeyDown={(e)=>e.stopPropagation()}
                 className="flex-1 p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900" />
               <button onClick={submitMyAnswer} className={BTN_SECONDARY}>Send</button>
             </div>
@@ -1185,7 +1224,6 @@ function FillBlankScreen({ round, players, isHost, onSubmit, onStartVoting, onVo
           {!submissions[auth?.currentUser?.uid] && (
             <div className="space-y-2 mb-3">
               <textarea value={myDraft} onChange={(e)=>setMyDraft(e.target.value)} rows={3}
-                onKeyDown={(e)=>e.stopPropagation()}
                 className="w-full p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900" placeholder="Your answer..." />
               <button onClick={()=>{ if(myDraft.trim()) onSubmit(myDraft); setMyDraft(''); }} className={`w-full ${BTN_PRIMARY}`}>Submit</button>
             </div>
@@ -1198,7 +1236,7 @@ function FillBlankScreen({ round, players, isHost, onSubmit, onStartVoting, onVo
       {round.phase === 'collect_votes' && (
         <>
           <p className="text-center text-sm text-gray-600 dark:text-gray-300 mb-3">Vote for the best answer</p>
-          <div className="space-y-2">
+        <div className="space-y-2">
             {Object.entries(submissions).map(([uid, sub])=>(
               <button key={uid} onClick={()=>onVote(uid)}
                 className={`w-full p-3 rounded-xl border-2 text-left ${votes[auth?.currentUser?.uid]===uid ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'}`}>
