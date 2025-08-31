@@ -22,19 +22,18 @@ import { fillInPrompts, getRandomFillIn } from '../lib/fillin';
 import { nhiePrompts, getRandomNHIE } from '../lib/nhie';
 
 /* =========================================================
-   Helpers (icons, library resolution, little utils)
+   Small helpers
 ========================================================= */
 const iconMap = { Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle };
-
 function classNames(...xs) { return xs.filter(Boolean).join(' '); }
 const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 /* =========================================================
-   Component
+   Main Component
 ========================================================= */
 export default function Overshare() {
   /* ----------------------------
-     Core state (shared)
+     Core state
   ---------------------------- */
   const [gameState, setGameState] = useState('welcome'); // welcome → playChoice → solo | createOrJoin | waitingRoom | classic… | party
   const [playerName, setPlayerName] = useState('');
@@ -42,7 +41,11 @@ export default function Overshare() {
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
 
-  // players, categories, classic
+  // Lobby create/join progress
+  const [creatingLobby, setCreatingLobby] = useState(false);
+  const [joiningLobby, setJoiningLobby] = useState(false);
+
+  // classic shared
   const [players, setPlayers] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
@@ -53,46 +56,46 @@ export default function Overshare() {
   const [currentCategory, setCurrentCategory] = useState('');
   const [currentQuestionAsker, setCurrentQuestionAsker] = useState('');
 
-  // voting (classic)
+  // category voting (classic)
   const [categoryVotes, setCategoryVotes] = useState({});
   const [myVotedCategories, setMyVotedCategories] = useState([]);
   const [hasVotedCategories, setHasVotedCategories] = useState(false);
 
-  // audio / toasts
+  // audio / toast
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [notification, setNotification] = useState(null);
   const audioCtxRef = useRef(null);
 
-  // skips (classic)
+  // skip per turn (classic)
   const [skipsUsedThisTurn, setSkipsUsedThisTurn] = useState(0);
   const maxSkipsPerTurn = 1;
 
-  // modal
+  // help modal
   const [showHelp, setShowHelp] = useState(false);
 
-  // firebase listener
+  // listener
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
 
   /* ----------------------------
-     Party Mode state
+     Mode + Party state
   ---------------------------- */
   const [mode, setMode] = useState(null); // null | 'classic' | 'party'
-  const [partyRound, setPartyRound] = useState(0); // increments each round
+  const [partyRound, setPartyRound] = useState(0);
   const [partyRoundType, setPartyRoundType] = useState(null); // 'fillin' | 'nhie' | 'superlatives'
   const [partyPhase, setPartyPhase] = useState(null); // 'prep' | 'collect' | 'guess' | 'results'
   const [partyPrompt, setPartyPrompt] = useState('');
-  const [turnMasterId, setTurnMasterId] = useState(null); // player.id in control
-  const [submissions, setSubmissions] = useState([]); // fill-in answers [{playerId, text}]
-  const [fillDone, setFillDone] = useState({}); // map playerId -> boolean
-  const [superVotes, setSuperVotes] = useState({}); // map voterId -> targetId
-  const [nhieAnswers, setNhieAnswers] = useState({}); // map playerId -> boolean
-  const [nhieGuesses, setNhieGuesses] = useState({}); // map playerId -> boolean
-  const [scores, setScores] = useState({}); // map playerId -> number
+  const [turnMasterId, setTurnMasterId] = useState(null);
+  const [submissions, setSubmissions] = useState([]); // fill-in: [{playerId,text}]
+  const [fillDone, setFillDone] = useState({});
+  const [superVotes, setSuperVotes] = useState({}); // voterId -> targetPlayerId
+  const [nhieAnswers, setNhieAnswers] = useState({}); // playerId -> boolean
+  const [nhieGuesses, setNhieGuesses] = useState({}); // playerId -> boolean
+  const [scores, setScores] = useState({});
   const [announcement, setAnnouncement] = useState(null);
 
-  // local-only helper for NHIE guess building
-  const [guessDraft, setGuessDraft] = useState({}); // {playerId: true/false}
+  // NHIE local guess draft (must be top-level)
+  const [guessDraft, setGuessDraft] = useState({});
 
   // Solo (Quickstart) local-only
   const [soloCategory, setSoloCategory] = useState(null);
@@ -100,7 +103,7 @@ export default function Overshare() {
   const [soloHistory, setSoloHistory] = useState([]);
 
   /* ----------------------------
-     Category fallback & library
+     Category library resolution
   ---------------------------- */
   const FALLBACK_CATEGORIES = useMemo(
     () => ({
@@ -150,7 +153,7 @@ export default function Overshare() {
   }, []);
 
   /* ----------------------------
-     Audio + toasts
+     Audio + Toasts
   ---------------------------- */
   const getAudio = () => {
     if (!audioEnabled) return null;
@@ -192,7 +195,8 @@ export default function Overshare() {
   ---------------------------- */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
-      await setDoc(doc(db, 'sessions', code), {
+      const ref = doc(db, 'sessions', code);
+      await setDoc(ref, {
         hostId: hostPlayer.id,
         players: [hostPlayer],
         gameState: 'waitingRoom',
@@ -207,7 +211,7 @@ export default function Overshare() {
         turnHistory: [],
         categoryVotes: {},
 
-        // party block
+        // party fields
         partyRound: 0,
         partyRoundType: null,
         partyPhase: null,
@@ -224,9 +228,9 @@ export default function Overshare() {
         createdAt: serverTimestamp()
       });
       return true;
-    } catch (err) {
-      console.error('Error creating session:', err);
-      return false;
+    } catch (e) {
+      console.error('Error creating session (setDoc):', e);
+      throw e;
     }
   };
 
@@ -241,7 +245,7 @@ export default function Overshare() {
       if (!snap.exists()) return;
       const d = snap.data() || {};
 
-      // player join ping
+      // join toast
       const newCount = (d.players || []).length;
       if (previousPlayerCount > 0 && newCount > previousPlayerCount) {
         const newPlayer = (d.players || [])[newCount - 1];
@@ -268,7 +272,7 @@ export default function Overshare() {
       setMode(d.mode || null);
       setGameState(d.gameState || 'waitingRoom');
 
-      // party block
+      // party fields
       setPartyRound(d.partyRound || 0);
       setPartyRoundType(d.partyRoundType || null);
       setPartyPhase(d.partyPhase || null);
@@ -282,7 +286,7 @@ export default function Overshare() {
       setScores({ ...(d.scores || {}) });
       setAnnouncement(d.announcement || null);
 
-      // reset per-turn skip count when index changes
+      // reset per-turn skip count when index changes (classic)
       const incomingTurn = typeof d.currentTurnIndex === 'number' ? d.currentTurnIndex : 0;
       if (incomingTurn !== prevTurnIndexRef.current) {
         setSkipsUsedThisTurn(0);
@@ -300,47 +304,86 @@ export default function Overshare() {
   }, []);
 
   /* ----------------------------
-     Classic handlers (unchanged vibe)
+     Classic handlers
   ---------------------------- */
   const handleCreateSession = async () => {
-    if (!playerName.trim()) return;
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const hostPlayer = {
-      id: myId,
-      name: playerName,
-      isHost: true,
-      joinedAt: new Date().toISOString()
-    };
-    const ok = await createFirebaseSession(code, hostPlayer);
-    if (!ok) { alert('Failed to create session. Please try again.'); return; }
-    setSessionCode(code); setIsHost(true); setPlayers([hostPlayer]); setGameState('waitingRoom');
-    listenToSession(code); playSound('success');
+    if (!playerName.trim()) {
+      alert('Please enter your name.');
+      return;
+    }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      alert('You appear to be offline. Please reconnect and try again.');
+      return;
+    }
+
+    setCreatingLobby(true);
+    try {
+      const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const hostPlayer = {
+        id: myId,
+        name: playerName.trim(),
+        isHost: true,
+        joinedAt: new Date().toISOString()
+      };
+
+      console.log('[create] start', { code, myId, name: hostPlayer.name });
+      const ok = await createFirebaseSession(code, hostPlayer);
+      console.log('[create] setDoc ok:', ok);
+      if (!ok) throw new Error('createFirebaseSession returned false');
+
+      setSessionCode(code);
+      setIsHost(true);
+      setPlayers([hostPlayer]);
+      setGameState('waitingRoom');
+      listenToSession(code);
+      playSound('success');
+    } catch (err) {
+      console.error('[create] failed:', err);
+      alert(`Could not create game: ${err?.message || err}`);
+    } finally {
+      setCreatingLobby(false);
+    }
   };
 
   const handleJoinSession = async () => {
-    if (!playerName.trim()) return;
+    if (!playerName.trim()) {
+      alert('Please enter your name.');
+      return;
+    }
     const code = (sessionCode || '').trim().toUpperCase();
     if (!code) return;
 
-    const sessionRef = doc(db, 'sessions', code);
-    const snap = await getDoc(sessionRef);
-    if (!snap.exists()) { alert('Session not found.'); return; }
+    setJoiningLobby(true);
+    try {
+      const sessionRef = doc(db, 'sessions', code);
+      const snap = await getDoc(sessionRef);
+      if (!snap.exists()) { alert('Session not found.'); return; }
 
-    const d = snap.data() || {};
-    const exists = (d.players || []).some(p => p?.id === myId || p?.name === playerName);
-    if (!exists) {
-      const newPlayer = { id: myId, name: playerName, isHost: false, joinedAt: new Date().toISOString() };
-      try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
-      catch {
-        const fresh = (await getDoc(sessionRef)).data() || {};
-        await updateDoc(sessionRef, { players: [...(fresh.players || []), newPlayer] });
+      const d = snap.data() || {};
+      const exists = (d.players || []).some(p => p?.id === myId || p?.name === playerName.trim());
+
+      if (!exists) {
+        const newPlayer = { id: myId, name: playerName.trim(), isHost: false, joinedAt: new Date().toISOString() };
+        try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
+        catch {
+          const fresh = (await getDoc(sessionRef)).data() || {};
+          await updateDoc(sessionRef, { players: [...(fresh.players || []), newPlayer] });
+        }
       }
+
+      setIsHost(false);
+      setSessionCode(code);
+      setGameState('waitingRoom');
+      listenToSession(code);
+      playSound('success');
+    } catch (e) {
+      console.error('[join] failed:', e);
+      alert(`Could not join: ${e?.message || e}`);
+    } finally {
+      setJoiningLobby(false);
     }
-    setIsHost(false); setSessionCode(code); setGameState('waitingRoom');
-    listenToSession(code); playSound('success');
   };
 
-  // Classic voting & flow kept from your last good build
   const calculateTopCategories = (votes) => {
     const vc = {};
     Object.values(votes || {}).forEach(list => (list || []).forEach(cat => vc[cat] = (vc[cat] || 0) + 1));
@@ -428,13 +471,12 @@ export default function Overshare() {
   const getPlayerById = (id) => (players || []).find(p => p.id === id);
   const isTurnMaster = turnMasterId === myId;
 
-  // ratio 1:1:1 across [fillin, nhie, super]
+  // 1:1:1 ratio across [fillin, nhie, superlatives]
   const nextPartyTypeFromRound = (r) => (['fillin', 'nhie', 'superlatives'][r % 3]);
 
   const startPartyMode = async () => {
     if (!sessionCode) return;
     const firstTM = (players || [])[0]?.id || myId;
-    // initialize scores for everyone
     const initScores = {};
     (players || []).forEach(p => { initScores[p.id] = 0; });
 
@@ -451,8 +493,8 @@ export default function Overshare() {
 
   const startNextPartyPrompt = async (first = false) => {
     if (!sessionCode) return;
-    // decide type
-    const snap = await getDoc(doc(db, 'sessions', sessionCode));
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const snap = await getDoc(sessionRef);
     const d = snap.data() || {};
     const round = (d.partyRound || 0) + (first ? 0 : 1);
     const type = nextPartyTypeFromRound(round);
@@ -462,7 +504,7 @@ export default function Overshare() {
     else if (type === 'nhie') prompt = getRandomNHIE(new Set());
     else prompt = getRandomSuperlative(new Set());
 
-    await updateDoc(doc(db, 'sessions', sessionCode), {
+    await updateDoc(sessionRef, {
       gameState: 'party',
       mode: 'party',
       partyRound: round,
@@ -483,7 +525,7 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { partyPhase: 'collect' });
   };
 
-  /* ----- FILL-IN: submit answers (2 max), done flag, pick favorite ----- */
+  /* ----- FILL-IN ----- */
   const mySubmitCount = useMemo(
     () => (submissions || []).filter(s => s.playerId === myId).length,
     [submissions, myId]
@@ -492,19 +534,29 @@ export default function Overshare() {
 
   const submitFillInAnswer = async (text) => {
     if (!sessionCode) return;
-    if (turnMasterId === myId) return; // TM cannot submit/earn
+    if (turnMasterId === myId) return; // TM cannot submit
     const trimmed = (text || '').trim();
-    if (!trimmed) return;
-    if (!canSubmitMore) return;
+    if (!trimmed || !canSubmitMore) return;
 
     const sessionRef = doc(db, 'sessions', sessionCode);
     const fresh = (await getDoc(sessionRef)).data() || {};
     const newSubs = [...(fresh.submissions || []), { playerId: myId, text: trimmed }];
     const newFillDone = { ...(fresh.fillDone || {}) };
     const myCount = newSubs.filter(s => s.playerId === myId).length;
-    if (myCount >= 2) newFillDone[myId] = true;
-
-    await updateDoc(sessionRef, { submissions: newSubs, fillDone: newFillDone });
+    if (myCount >= 2) newFillInDoneFor(sessionRef, newSubs, newFillDone);
+    else await updateDoc(sessionRef, { submissions: newSubs });
+  };
+  // helper: mark done and advance if all non-TM done
+  const newFillInDoneFor = async (sessionRef, newSubs, newFillDone) => {
+    newFillDone[myId] = true;
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    const nonTM = (fresh.players || []).filter(p => p.id !== fresh.turnMasterId);
+    const allDone = nonTM.every(p => newFillDone[p.id]);
+    await updateDoc(sessionRef, {
+      submissions: newSubs,
+      fillDone: newFillDone,
+      ...(allDone ? { partyPhase: 'results' } : {})
+    });
   };
 
   const markFillInDone = async () => {
@@ -515,7 +567,6 @@ export default function Overshare() {
     const newFillDone = { ...(fresh.fillDone || {}) };
     newFillDone[myId] = true;
 
-    // if all non-TM players done, advance to results
     const nonTM = (fresh.players || []).filter(p => p.id !== fresh.turnMasterId);
     const allDone = nonTM.every(p => newFillDone[p.id]);
     await updateDoc(sessionRef, {
@@ -546,11 +597,9 @@ export default function Overshare() {
     await startNextPartyPrompt();
   };
 
-  /* ----- NHIE: players answer; TM guesses; score both sides on correct ----- */
+  /* ----- NHIE ----- */
   useEffect(() => {
-    if (mode === 'party' && partyRoundType === 'nhie' && partyPhase === 'guess') {
-      setGuessDraft({});
-    }
+    if (mode === 'party' && partyRoundType === 'nhie' && partyPhase === 'guess') setGuessDraft({});
   }, [mode, partyRoundType, partyPhase]);
 
   const submitNhieAnswer = async (hasDone) => {
@@ -577,7 +626,7 @@ export default function Overshare() {
     const answers = fresh.nhieAnswers || {};
     const guesses = { ...guessDraft };
 
-    // scoring: +1 to TM for each correct; +1 to each correctly-guessed player
+    // scoring: +1 to TM per correct guess; +1 to each correctly-guessed player
     const nextScores = { ...(fresh.scores || {}) };
     let tmPoints = 0;
     (fresh.players || []).forEach(p => {
@@ -589,7 +638,7 @@ export default function Overshare() {
     });
     nextScores[fresh.turnMasterId] = (nextScores[fresh.turnMasterId] || 0) + tmPoints;
 
-    // rotate TM to next player in order
+    // rotate TM to next player
     const idx = (fresh.players || []).findIndex(p => p.id === fresh.turnMasterId);
     const nextIdx = ((idx + 1) % (fresh.players || []).length);
     const nextTM = (fresh.players || [])[nextIdx]?.id || fresh.turnMasterId;
@@ -607,7 +656,7 @@ export default function Overshare() {
     await startNextPartyPrompt();
   };
 
-  /* ----- SUPERLATIVES: everyone votes; tie = new superlative until single winner ----- */
+  /* ----- SUPERLATIVES ----- */
   const submitSuperVote = async (targetPlayerId) => {
     if (!sessionCode) return;
     const sessionRef = doc(db, 'sessions', sessionCode);
@@ -629,7 +678,6 @@ export default function Overshare() {
     const isTie = entries.length > 1 && entries[1][1] === topCount;
 
     if (isTie || !topId) {
-      // tie-breaker: new prompt, clear votes
       await updateDoc(sessionRef, {
         partyPrompt: getRandomSuperlative(new Set()),
         superVotes: {},
@@ -642,7 +690,7 @@ export default function Overshare() {
     const nextScores = { ...(fresh.scores || {}) };
     nextScores[topId] = (nextScores[topId] || 0) + 1;
 
-    // rotate TM to next in order
+    // rotate TM in order
     const idx = (fresh.players || []).findIndex(p => p.id === fresh.turnMasterId);
     const nextIdx = ((idx + 1) % (fresh.players || []).length);
     const nextTM = (fresh.players || [])[nextIdx]?.id || fresh.turnMasterId;
@@ -751,13 +799,6 @@ export default function Overshare() {
       </span>
     );
   };
-
-  const PlayerBadge = ({ pId }) => (
-    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700 text-xs">
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-      {getPlayerById(pId)?.name || 'Player'}
-    </span>
-  );
 
   const Leaderboard = () => {
     const entries = Object.entries(scores || {}).sort((a, b) => (b[1] || 0) - (a[1] || 0)).slice(0, 3);
@@ -912,15 +953,21 @@ export default function Overshare() {
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <h2 className="text-2xl font-bold mb-6">Ready to play, {playerName}!</h2>
           <div className="space-y-4">
-            <button onClick={() => { playSound('click'); handleCreateSession(); }}
-                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center">
-              <Users className="w-5 h-5 mr-2" /> Create Game
+            <button
+              onClick={() => { playSound('click'); handleCreateSession(); }}
+              disabled={creatingLobby}
+              className={`w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center ${creatingLobby ? 'opacity-70 cursor-wait' : ''}`}
+            >
+              <Users className="w-5 h-5 mr-2" />
+              {creatingLobby ? 'Creating…' : 'Create Game'}
             </button>
+
             <div className="flex items-center my-2">
               <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600" />
               <span className="px-4 text-gray-500 dark:text-gray-300 text-sm">or</span>
               <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600" />
             </div>
+
             <div className="space-y-3">
               <input
                 type="text" placeholder="Enter session code"
@@ -929,10 +976,10 @@ export default function Overshare() {
               />
               <button
                 onClick={() => { playSound('click'); handleJoinSession(); }}
-                disabled={!sessionCode.trim()}
-                className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all disabled:opacity-50"
+                disabled={!sessionCode.trim() || joiningLobby}
+                className={`w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all disabled:opacity-50 ${joiningLobby ? 'cursor-wait' : ''}`}
               >
-                Join Game
+                {joiningLobby ? 'Joining…' : 'Join Game'}
               </button>
             </div>
           </div>
@@ -941,7 +988,7 @@ export default function Overshare() {
     );
   }
 
-  /* ----- Waiting Room (mode select here) ----- */
+  /* ----- Waiting Room (mode select) ----- */
   if (gameState === 'waitingRoom') {
     const canParty = (players || []).length >= 3;
     return (
@@ -952,6 +999,7 @@ export default function Overshare() {
             <h2 className="text-2xl font-bold mb-1">Session {sessionCode}</h2>
             <p className="text-gray-600 dark:text-gray-300">Share this code so others can join</p>
           </div>
+
           <div className="mb-4 space-y-2 text-left">
             {(players || []).map(p => (
               <div key={p.id} className={classNames(
@@ -1134,10 +1182,8 @@ export default function Overshare() {
     );
   }
 
-  /* ----- Relationship survey (Classic) ----- */
+  /* ----- Relationship survey (Classic stub) ----- */
   if (gameState === 'relationshipSurvey') {
-    const others = (players || []).filter(p => p.id !== myId);
-    // We’ll keep the simple “ack and continue” screen (you asked to keep initial questions for later).
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <TopBar /><HelpModal /><NotificationToast />
@@ -1148,10 +1194,7 @@ export default function Overshare() {
           {isHost ? (
             <button
               onClick={async () => {
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  gameState: 'categoryPicking',
-                  currentTurnIndex: 0
-                });
+                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'categoryPicking', currentTurnIndex: 0 });
                 setGameState('categoryPicking'); setCurrentTurnIndex(0); playSound('click');
               }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
@@ -1189,6 +1232,7 @@ export default function Overshare() {
               </>
             )}
           </div>
+
           {isMyTurn ? (
             <div className="space-y-3">
               {(availableCategories || []).map((ck) => {
@@ -1330,7 +1374,7 @@ export default function Overshare() {
 
               <PromptHeader />
 
-              {/* PREP — only TM sees "Start Round" */}
+              {/* PREP — TM only sees Start */}
               {partyPhase === 'prep' && (
                 <div className="text-center">
                   {iAmTM ? (
@@ -1369,7 +1413,7 @@ export default function Overshare() {
 
               {partyRoundType === 'fillin' && partyPhase === 'results' && (
                 <div>
-                  {/* Show to everyone, but only TM can pick a favorite */}
+                  {/* Everyone sees list; only TM can "Pick" */}
                   <h3 className="text-lg font-semibold mb-3">Submissions</h3>
                   <div className="grid gap-2">
                     {(submissions || []).map((s, idx) => (
@@ -1536,7 +1580,7 @@ export default function Overshare() {
 }
 
 /* =========================================================
-   Small child component (Fill-in submit)
+   Child component: Fill-in submitter
 ========================================================= */
 function FillInSubmitter({ canSubmitMore, mySubmitCount, onSubmit, onDone }) {
   const [text, setText] = useState('');
@@ -1559,10 +1603,7 @@ function FillInSubmitter({ canSubmitMore, mySubmitCount, onSubmit, onDone }) {
         </button>
       </div>
       <div className="text-right">
-        <button
-          onClick={onDone}
-          className="text-sm text-gray-700 dark:text-gray-300 underline"
-        >
+        <button onClick={onDone} className="text-sm text-gray-700 dark:text-gray-300 underline">
           I’m done
         </button>
       </div>
