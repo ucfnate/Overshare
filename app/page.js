@@ -20,7 +20,6 @@ import {
   Crown,
   Trophy,
   CheckCircle2,
-  ThumbsUp,
   Wand2
 } from 'lucide-react';
 
@@ -83,6 +82,10 @@ export default function Overshare() {
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showScores, setShowScores] = useState(false);
+
+  // Party local UI state (keep hooks at top level!)
+  const [fillDraft, setFillDraft] = useState('');
+  const [nhiGuessMap, setNhiGuessMap] = useState({});
 
   /* =========================================================
      Refs
@@ -191,13 +194,13 @@ export default function Overshare() {
     }
   };
 
-  // SAFE synth (never throws on click)
-  const playSound = (type) => {
+  // Safe synth (guards stop/start ordering)
+  function playSound(type) {
     try {
       const audio = getAudio();
       if (!audio) return;
 
-      const tone = (seq) => {
+      function tone(seq) {
         const osc = audio.createOscillator();
         const gain = audio.createGain();
         osc.type = 'sine';
@@ -207,46 +210,56 @@ export default function Overshare() {
         const t0 = audio.currentTime + 0.001;
         gain.gain.setValueAtTime(0.1, t0);
         osc.start(t0);
+
+        // guard stop inside seq
+        let stopped = false;
+        const safeStop = (t) => {
+          if (stopped) return;
+          stopped = true;
+          try { osc.stop(t); } catch {}
+        };
+
         try {
-          seq(osc, gain, t0);
+          seq(osc, gain, t0, safeStop);
         } catch {
-          try { osc.stop(t0 + 0.15); } catch {}
+          safeStop(t0 + 0.15);
         }
-      };
+      }
 
       const sounds = {
         click: () =>
-          tone((osc, gain, t0) => {
+          tone((osc, gain, t0, stop) => {
             osc.frequency.setValueAtTime(800, t0);
             osc.frequency.exponentialRampToValueAtTime(600, t0 + 0.10);
             gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.10);
-            osc.stop(t0 + 0.11);
+            stop(t0 + 0.12);
           }),
         success: () =>
-          tone((osc, gain, t0) => {
+          tone((osc, gain, t0, stop) => {
             osc.frequency.setValueAtTime(523.25, t0);
             osc.frequency.setValueAtTime(659.25, t0 + 0.10);
             gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
-            osc.stop(t0 + 0.24);
+            stop(t0 + 0.24);
           }),
         turn: () =>
-          tone((osc, gain, t0) => {
+          tone((osc, gain, t0, stop) => {
             osc.frequency.setValueAtTime(440, t0);
             osc.frequency.setValueAtTime(554.37, t0 + 0.15);
             gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.30);
-            osc.stop(t0 + 0.32);
+            stop(t0 + 0.32);
           }),
       };
 
       if (sounds[type]) sounds[type]();
     } catch {}
-  };
+  }
 
-  const showNotification = (message, emoji = '🎉') => {
+  // Hoisted declaration to avoid “not defined” during async callback
+  function showNotification(message, emoji = '🎉') {
     setNotification({ message, emoji });
     window.clearTimeout((showNotification._t || 0));
     showNotification._t = window.setTimeout(() => setNotification(null), 3000);
-  };
+  }
 
   /* =========================================================
      Helpers: Questions & Party Prompts
@@ -412,6 +425,13 @@ export default function Overshare() {
     };
   }, []);
 
+  // Reset party UI bits when state/prompt changes
+  useEffect(() => {
+    if (!party) return;
+    if (party.state === 'collect_fill') setFillDraft('');
+    if (party.state === 'guessing_nhi') setNhiGuessMap({});
+  }, [party?.state, party?.prompt]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* =========================================================
      Create / Join
   ========================================================= */
@@ -424,10 +444,7 @@ export default function Overshare() {
       joinedAt: new Date().toISOString()
     };
 
-    console.log('[create] start', { code, myId: hostPlayer.id, name: playerName });
-
     const ok = await createFirebaseSession(code, hostPlayer);
-    console.log('[create] setDoc ok:', ok);
     if (!ok) {
       alert('Failed to create session. Please try again.');
       return;
@@ -474,6 +491,7 @@ export default function Overshare() {
     }
 
     setIsHost(false);
+    setSessionCode(code);
     listenToSession(code);
     setGameState('waitingRoom');
     try { playSound('success'); } catch {}
@@ -603,8 +621,11 @@ export default function Overshare() {
     return { type, prompt };
   };
 
-  const hostStartPartyRound = async () => {
-    if (!sessionCode || !isHost || !party) return;
+  // Turn owner starts party round (not just host)
+  const turnStartPartyRound = async () => {
+    if (!sessionCode || !party) return;
+    const myTurn = players[party.turnIndex]?.name === playerName;
+    if (!myTurn) return;
     const { type, prompt } = partyChooseTypeAndPrompt();
     const next = {
       ...party,
@@ -648,9 +669,12 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.done': done });
   };
 
-  // Host picks favorite (anonymous list)
-  const hostPickFavorite = async (answerId) => {
-    if (!sessionCode || !isHost || !party) return;
+  // Turn owner picks favorite (anonymous list)
+  const turnPickFavorite = async (answerId) => {
+    if (!sessionCode || !party) return;
+    const myTurn = players[party.turnIndex]?.name === playerName;
+    if (!myTurn) return;
+
     const all = Object.values(party.submissions || {}).flat();
     const picked = all.find(a => a.id === answerId);
     if (!picked) return;
@@ -658,9 +682,8 @@ export default function Overshare() {
     const scores = { ...(party.scores || {}) };
     scores[picked.by] = (scores[picked.by] || 0) + 1;
 
-    // Winner goes next (per spec)
+    // Winner goes next
     const winnerIndex = Math.max(0, players.findIndex(p => p.name === picked.by));
-    const nextRound = (party.round || 1) + 1;
 
     const next = {
       ...party,
@@ -673,17 +696,19 @@ export default function Overshare() {
       party: next,
       currentTurnIndex: winnerIndex
     });
-
-    // After reveal, host can advance to next setup
   };
 
-  const hostAdvanceAfterReveal = async () => {
-    if (!sessionCode || !isHost || !party) return;
+  // Turn owner advances after reveal
+  const turnAdvanceAfterReveal = async () => {
+    if (!sessionCode || !party) return;
+    const myTurn = players[currentTurnIndex]?.name === playerName;
+    if (!myTurn) return;
+
     const next = {
       ...party,
       state: 'setup',
       round: (party.round || 1) + 1,
-      turnIndex: currentTurnIndex // keep synced with session field
+      turnIndex: currentTurnIndex // sync for UI
     };
     await updateDoc(doc(db, 'sessions', sessionCode), {
       party: next,
@@ -691,17 +716,17 @@ export default function Overshare() {
     });
   };
 
-  // Superlatives: everyone (including turn owner) votes for a player
+  // Superlatives: everyone (including turn owner) votes
   const submitSuperVote = async (voteForName) => {
     if (!sessionCode || !party) return;
-    const me = playerName;
     if (!players.some(p => p.name === voteForName)) return;
-    const votes = { ...(party.votes || {}), [me]: voteForName };
+    const votes = { ...(party.votes || {}), [playerName]: voteForName };
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.votes': votes });
 
     const everyoneVoted = players.length > 0 && players.every(p => votes[p.name]);
-    if (everyoneVoted && isHost) {
-      // tally
+    // Let turn owner resolve tally to reduce race conditions
+    const isTurnOwner = players[party.turnIndex]?.name === playerName;
+    if (everyoneVoted && isTurnOwner) {
       const tally = {};
       Object.values(votes).forEach(name => { tally[name] = (tally[name] || 0) + 1; });
       const sorted = Object.entries(tally).sort((a,b)=>b[1]-a[1]);
@@ -741,10 +766,12 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.nhiAnswers': ans });
   };
 
-  // Host guesses has/hasn't for each player
-  const hostSubmitNhiGuesses = async (guessesMap) => {
-    if (!sessionCode || !isHost || !party) return;
-    // compute scores
+  // Turn owner guesses has/hasn't for each player
+  const turnSubmitNhiGuesses = async (guessesMap) => {
+    if (!sessionCode || !party) return;
+    const myTurn = players[party.turnIndex]?.name === playerName;
+    if (!myTurn) return;
+
     const actual = party.nhiAnswers || {};
     const scores = { ...(party.scores || {}) };
     let hostPoints = 0;
@@ -754,12 +781,13 @@ export default function Overshare() {
       if (guess === undefined) return;
       const correct = (guess === true && has === true) || (guess === false && has === false);
       if (correct) {
-        hostPoints += 1;              // host gains a point
+        hostPoints += 1;                     // turn owner gains a point
         scores[name] = (scores[name] || 0) + 1; // correctly guessed player gains a point
       }
     });
 
-    scores[players[party.turnIndex]?.name] = (scores[players[party.turnIndex]?.name] || 0) + hostPoints;
+    const turnOwnerName = players[party.turnIndex]?.name;
+    scores[turnOwnerName] = (scores[turnOwnerName] || 0) + hostPoints;
 
     const next = { ...party, state: 'reveal', winner: null, guesses: guessesMap, scores };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
@@ -1620,9 +1648,10 @@ export default function Overshare() {
      PARTY MODE SCREENS
   -------------------------- */
 
-  // Party setup (host only sees Start Round)
+  // Party setup (turn owner only sees Start Round)
   if (gameState === 'party_setup' && party) {
     const turnOwner = players[party.turnIndex]?.name;
+    const iAmTurnOwner = playerName === turnOwner;
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <TopBar />
@@ -1638,15 +1667,15 @@ export default function Overshare() {
             <p><span className="font-semibold">Turn:</span> {turnOwner}</p>
           </div>
 
-          {isHost ? (
+          {iAmTurnOwner ? (
             <button
-              onClick={hostStartPartyRound}
+              onClick={turnStartPartyRound}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg"
             >
               Start Round
             </button>
           ) : (
-            <p className="text-gray-500 dark:text-gray-300 text-center">Waiting for host to start the round…</p>
+            <p className="text-gray-500 dark:text-gray-300 text-center">Waiting for {turnOwner} to start the round…</p>
           )}
 
           <button
@@ -1673,9 +1702,6 @@ export default function Overshare() {
       const allNonTurn = players.filter(p=>p.name !== turnOwner);
       const allDone = allNonTurn.length > 0 && allNonTurn.every(p => party.done?.[p.name] || (party.submissions?.[p.name] || []).length > 0);
 
-      const [draft, setDraft] = useState('');
-      useEffect(()=>{ setDraft(''); }, [party.prompt]);
-
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
           <TopBar />
@@ -1696,16 +1722,16 @@ export default function Overshare() {
                 <div className="space-y-2 mb-3">
                   <input
                     type="text"
-                    value={draft}
-                    onChange={(e)=>setDraft(e.target.value)}
+                    value={fillDraft}
+                    onChange={(e)=>setFillDraft(e.target.value)}
                     placeholder={mySubs.length >= 2 ? 'You reached 2 answers' : 'Your answer…'}
                     disabled={mySubs.length >= 2 || myDone}
                     className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 bg-white dark:bg-gray-900"
                   />
                   <div className="flex gap-2">
                     <button
-                      onClick={()=>{ submitFillAnswer(draft); setDraft(''); }}
-                      disabled={mySubs.length >= 2 || myDone || !draft.trim()}
+                      onClick={()=>{ submitFillAnswer(fillDraft); setFillDraft(''); }}
+                      disabled={mySubs.length >= 2 || myDone || !fillDraft.trim()}
                       className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-2 rounded-xl font-semibold disabled:opacity-50"
                     >
                       Submit
@@ -1736,7 +1762,7 @@ export default function Overshare() {
                   {Object.values(party.submissions || {}).flat().map(a => (
                     <button
                       key={a.id}
-                      onClick={()=> hostPickFavorite(a.id)}
+                      onClick={()=> turnPickFavorite(a.id)}
                       className="w-full p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 text-left hover:border-purple-400"
                     >
                       {a.text}
@@ -1758,7 +1784,7 @@ export default function Overshare() {
       );
     }
 
-    // ===== Superlatives (everyone votes, including turn owner) =====
+    // ===== Superlatives (everyone votes, inc. turn owner) =====
     if (party.state === 'vote_super') {
       const myVote = party.votes?.[playerName];
       return (
@@ -1856,7 +1882,6 @@ export default function Overshare() {
             {iAmTurnOwner && allSubmitted && (
               <button
                 onClick={async ()=> {
-                  // move to guessing
                   const next = { ...party, state: 'guessing_nhi' };
                   await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
                 }}
@@ -1878,9 +1903,8 @@ export default function Overshare() {
       );
     }
 
-    // ===== NHI guessing (host guesses everyone) =====
+    // ===== NHI guessing (turn owner guesses everyone) =====
     if (party.state === 'guessing_nhi') {
-      const [guessMap, setGuessMap] = useState({});
       const others = players.filter(p => p.name !== turnOwner);
 
       return (
@@ -1904,18 +1928,18 @@ export default function Overshare() {
                     <span className="font-medium">{p.name}</span>
                     <div className="flex gap-2">
                       <button
-                        onClick={()=> setGuessMap(m=>({...m, [p.name]: true}))}
-                        className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.name]===true ? 'border-green-500 bg-green-50 dark:bg-green-900/20':'border-gray-300 dark:border-gray-600'}`}
+                        onClick={()=> setNhiGuessMap(m=>({...m, [p.name]: true}))}
+                        className={`px-3 py-1 rounded-lg border-2 ${nhiGuessMap[p.name]===true ? 'border-green-500 bg-green-50 dark:bg-green-900/20':'border-gray-300 dark:border-gray-600'}`}
                       >Has</button>
                       <button
-                        onClick={()=> setGuessMap(m=>({...m, [p.name]: false}))}
-                        className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.name]===false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20':'border-gray-300 dark:border-gray-600'}`}
+                        onClick={()=> setNhiGuessMap(m=>({...m, [p.name]: false}))}
+                        className={`px-3 py-1 rounded-lg border-2 ${nhiGuessMap[p.name]===false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20':'border-gray-300 dark:border-gray-600'}`}
                       >Hasn’t</button>
                     </div>
                   </div>
                 ))}
                 <button
-                  onClick={()=> hostSubmitNhiGuesses(guessMap)}
+                  onClick={()=> turnSubmitNhiGuesses(nhiGuessMap)}
                   className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
                 >
                   Confirm Guesses
@@ -1941,6 +1965,7 @@ export default function Overshare() {
 
     // ===== Reveal screen (shared)
     if (party.state === 'reveal') {
+      const iAmTurnOwner = players[currentTurnIndex]?.name === playerName;
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
           <TopBar />
@@ -1964,9 +1989,9 @@ export default function Overshare() {
 
             <Scoreboard scores={party.scores || {}} />
 
-            {isHost && (
+            {iAmTurnOwner && (
               <button
-                onClick={hostAdvanceAfterReveal}
+                onClick={turnAdvanceAfterReveal}
                 className="w-full mt-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
               >
                 Next Round
