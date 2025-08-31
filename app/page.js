@@ -1,7 +1,11 @@
 // app/page.js
 'use client';
+
+// Page-level caching/runtime — prevent prerender errors on "/"
 export const dynamic = 'force-dynamic';
-export const revalidate = false;
+export const revalidate = 0;           // must be a number or false
+export const fetchCache = 'force-no-store';
+
 /* =========================================================
    Imports
 ========================================================= */
