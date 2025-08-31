@@ -14,7 +14,7 @@ import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 import * as QLIB from '../lib/questionCategories';
 
-/* ------------------ button classes (raw Tailwind) ------------------ */
+/* ------------------ Tailwind button classes ------------------ */
 const BTN_PRIMARY = 'bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 const BTN_SECONDARY = 'bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 py-3 px-6 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800 transition-all';
 const BTN_OUTLINE_ORANGE = 'bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 py-3 px-6 rounded-xl font-semibold hover:bg-orange-50 dark:hover:bg-orange-900/10 transition-all';
@@ -22,6 +22,7 @@ const BTN_DISABLED = 'bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark
 
 const iconMap = { Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle };
 
+/* ------------------ Fallback categories (safety net) ------------------ */
 const FALLBACK_CATEGORIES = {
   icebreakers: { name: 'Icebreakers', description: 'Warm up with easy, fun prompts.', icon: 'Sparkles', color: 'from-purple-500 to-pink-500', questions: ['What was a small win this week?','What’s your go-to fun fact?'] },
   creative: { name: 'Creative', description: 'Imagine, riff, and get playful.', icon: 'Lightbulb', color: 'from-indigo-500 to-purple-500', questions: ['Invent a holiday.','Mash two movies into one plot.'] },
@@ -30,6 +31,7 @@ const FALLBACK_CATEGORIES = {
   spicy: { name: 'Spicy', description: 'Bold prompts for brave groups.', icon: 'Flame', color: 'from-orange-500 to-red-500', questions: ['What’s a hot take you stand by?','What should people be more honest about?'] }
 };
 
+/* ------------------ Wire to your real library if present ------------------ */
 const LIB = (() => {
   const cats =
     QLIB.questionCategories ||
@@ -56,23 +58,26 @@ const LIB = (() => {
   };
 })();
 
-/* -------------------------- main component -------------------------- */
+/* ======================================================================= */
+/*                                MAIN PAGE                                */
+/* ======================================================================= */
+
 export default function Page() {
-  // Flow stages: welcome -> survey -> createOrJoin/quickstart -> waitingRoom -> voting -> picking -> playing
+  // Flow: welcome -> survey -> createOrJoin/quickstart -> waitingRoom -> categoryVoting -> categoryPicking -> playing
   const [gameState, setGameState] = useState('welcome');
   const [mode, setMode] = useState('classic');
 
   // identity + survey (multiple-choice)
   const [playerName, setPlayerName] = useState('');
-  const nameRef = useRef(null);       // <-- make name input uncontrolled
-  const codeRef = useRef(null);       // <-- make join code uncontrolled
+  const nameRef = useRef(null);  // UNCONTROLLED name input (prevents mobile keyboard flicker)
+  const codeRef = useRef(null);  // UNCONTROLLED join code input
 
   const [surveyAnswers, setSurveyAnswers] = useState({
     relation: 'friends',          // friends | coworkers | family | mixed | new
     familiarity: 'acquaintances', // just_met | acquaintances | close | very_close
     tone: 'balanced',             // light | balanced | deep
-    spice: 'mild',                // mild | medium | hot (future AI tuning)
-    prefCategories: ['icebreakers','creative'] // from library keys
+    spice: 'mild',                // for future AI tuning
+    prefCategories: ['icebreakers','creative']
   });
 
   // session
@@ -112,8 +117,9 @@ export default function Page() {
   const prevTurnIdxRef = useRef(0);
 
   /* ----------------------------- helpers ----------------------------- */
+
   useEffect(() => {
-    // hydrate name from localStorage if present
+    // hydrate saved name
     try {
       const saved = localStorage.getItem('overshare:name');
       if (saved) {
@@ -131,7 +137,20 @@ export default function Page() {
 
   const toggleSound = () => setAudioEnabled(v => !v);
 
+  // Safely read the player's name from ref, state, or localStorage
+  const getNameSafe = () => {
+    const fromRef = nameRef?.current?.value;
+    if (fromRef && fromRef.trim()) return fromRef.trim();
+    if (playerName && playerName.trim()) return playerName.trim();
+    try {
+      const saved = localStorage.getItem('overshare:name');
+      if (saved && saved.trim()) return saved.trim();
+    } catch {}
+    return '';
+  };
+
   /* ---------------------- Firestore subscription --------------------- */
+
   const listenToSession = useCallback((code) => {
     if (!code) return;
     if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
@@ -170,6 +189,7 @@ export default function Page() {
   }, []);
 
   /* -------------------------- create / join -------------------------- */
+
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
@@ -193,7 +213,7 @@ export default function Page() {
       return true;
     } catch (err) {
       console.error('create session error:', err?.code, err?.message);
-      alert(`Create failed: ${err?.code || 'unknown'} — ${err?.message || ''}`); // <-- bubble up exact reason
+      alert(`Create failed: ${err?.code || 'unknown'} — ${err?.message || ''}`);
       return false;
     }
   };
@@ -211,32 +231,35 @@ export default function Page() {
   };
 
   const handleCreateSession = async () => {
-    // read from uncontrolled ref to avoid input focus issues
-    const enteredName = (nameRef.current?.value || '').trim();
-    if (!enteredName) return;
+    const enteredName = getNameSafe();
+    if (!enteredName) {
+      alert('Enter your name on the first screen');
+      return;
+    }
 
     setPlayerName(enteredName);
     try { localStorage.setItem('overshare:name', enteredName); } catch {}
 
     // ensure auth
-    let user = await ensureSignedIn();
-    let uid = user?.uid;
-    if (!uid) {
+    let user = null;
+    try { user = await (typeof ensureSignedIn === 'function' ? ensureSignedIn() : null); } catch {}
+    if (!user?.uid) {
       user = await forceAnonSignin();
-      uid = user?.uid;
     }
+    const uid = user?.uid || null;
 
     // Requested debug line:
     console.log('[create] uid:', uid);
 
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const hostPlayer = {
-      id: uid || `guest_${Date.now()}`, // still create even if rules are open
+      id: uid || `guest_${Date.now()}`, // works even if rules temporarily allow open create
       name: enteredName,
       isHost: true,
       surveyAnswers,
       joinedAt: new Date().toISOString(),
     };
+
     const ok = await createFirebaseSession(code, hostPlayer);
     if (!ok) return;
 
@@ -248,15 +271,23 @@ export default function Page() {
   };
 
   const handleJoinSession = async () => {
-    const enteredName = (nameRef.current?.value || '').trim();
+    const enteredName = getNameSafe();
     const enteredCode = (codeRef.current?.value || '').trim().toUpperCase();
-    if (!enteredName || !enteredCode) return;
+    if (!enteredName || !enteredCode) {
+      alert('Enter your name and the session code');
+      return;
+    }
 
     setPlayerName(enteredName);
     try { localStorage.setItem('overshare:name', enteredName); } catch {}
 
-    const user = await ensureSignedIn();
-    const uid = user?.uid;
+    // ensure auth
+    let user = null;
+    try { user = await (typeof ensureSignedIn === 'function' ? ensureSignedIn() : null); } catch {}
+    if (!user?.uid) {
+      try { user = await signInAnonymously(auth); } catch {}
+    }
+    const uid = user?.uid || `guest_${Date.now()}`;
 
     const sessionRef = doc(db, 'sessions', enteredCode);
     const snap = await getDoc(sessionRef);
@@ -266,7 +297,7 @@ export default function Page() {
 
     if (!alreadyIn) {
       const newPlayer = {
-        id: uid || `guest_${Date.now()}`,
+        id: uid,
         name: enteredName,
         isHost: false,
         surveyAnswers,
@@ -275,6 +306,7 @@ export default function Page() {
       try {
         await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
       } catch {
+        // fallback merge if arrayUnion clashes with duplicate object equality
         const fresh = (await getDoc(sessionRef)).data() || {};
         const next = [...(fresh.players || []), newPlayer]
           .filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
@@ -290,6 +322,7 @@ export default function Page() {
   };
 
   /* -------------------- voting & category picking -------------------- */
+
   const saveMyCategoryVotes = async (choices) => {
     if (!sessionCode || !auth?.currentUser?.uid) return;
     await updateDoc(doc(db, 'sessions', sessionCode), {
@@ -384,6 +417,7 @@ export default function Page() {
   };
 
   /* ---------------------- classic write-in / skip --------------------- */
+
   const submitQuestionWriteIn = async () => {
     if (!sessionCode || !questionDraft.trim()) return;
     const newQ = questionDraft.trim();
@@ -427,6 +461,7 @@ export default function Page() {
   };
 
   /* --------------------------- mode switching ------------------------- */
+
   const hostInitMode = async (newMode) => {
     if (!isHost || !sessionCode) return;
     let prompt = '';
@@ -452,6 +487,7 @@ export default function Page() {
   };
 
   /* ------------------------------- UI -------------------------------- */
+
   const TopBar = () => (
     <div className="fixed top-4 right-4 z-40 flex items-center gap-2 pointer-events-auto">
       <span className={`hidden sm:inline-flex px-2 py-1 rounded-lg text-xs font-medium ${libraryOK ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}>
@@ -546,7 +582,7 @@ export default function Page() {
 
   /* ------------------------------ Screens ----------------------------- */
 
-  // 1) Welcome (split Quickstart / Classic, survey-first, name input is UNCONTROLLED)
+  // 1) Welcome (split Quickstart / Classic; UNCONTROLLED name input)
   if (gameState === 'welcome') {
     return (
       <Frame title="Overshare">
@@ -569,7 +605,13 @@ export default function Page() {
         </div>
 
         <button
-          onClick={()=>{ const v=(nameRef.current?.value||'').trim(); if(!v) return; setGameState('survey'); }}
+          onClick={() => {
+            const v = (nameRef.current?.value || '').trim();
+            if (!v) return;
+            setPlayerName(v);
+            try { localStorage.setItem('overshare:name', v); } catch {}
+            setGameState('survey');
+          }}
           className={`w-full ${BTN_PRIMARY}`}
         >
           Continue
@@ -581,13 +623,26 @@ export default function Page() {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={()=>{ const v=(nameRef.current?.value||'').trim(); if(!v) return; setMode('quickstart'); setGameState('quickstart'); }}
+              onClick={() => {
+                const v = (nameRef.current?.value || '').trim();
+                if (!v) return;
+                setPlayerName(v);
+                try { localStorage.setItem('overshare:name', v); } catch {}
+                setMode('quickstart');
+                setGameState('quickstart');
+              }}
               className={BTN_SECONDARY}
             >
               Quickstart
             </button>
             <button
-              onClick={()=>{ const v=(nameRef.current?.value||'').trim(); if(!v) return; setGameState('createOrJoin'); }}
+              onClick={() => {
+                const v = (nameRef.current?.value || '').trim();
+                if (!v) return;
+                setPlayerName(v);
+                try { localStorage.setItem('overshare:name', v); } catch {}
+                setGameState('createOrJoin');
+              }}
               className={BTN_SECONDARY}
             >
               Classic
@@ -598,7 +653,7 @@ export default function Page() {
     );
   }
 
-  // 2) Survey (multiple-choice, all on one page)
+  // 2) Survey (multiple-choice, single page)
   if (gameState === 'survey') {
     const setField = (patch) => setSurveyAnswers(prev => ({ ...prev, ...patch }));
 
@@ -645,6 +700,7 @@ export default function Page() {
     return (
       <Frame title="Quick Survey">
         <div className="space-y-5">
+
           <div>
             <div className="text-sm mb-1 text-gray-600 dark:text-gray-300">How do you all know each other?</div>
             <RadioRow
@@ -741,10 +797,27 @@ export default function Page() {
 
   // 3) Create or Join
   if (gameState === 'createOrJoin') {
+    const missingName = !getNameSafe();
     return (
       <Frame title="Create or Join">
         <div className="space-y-3">
+          {missingName && (
+            <div className="mb-2">
+              <input
+                ref={nameRef}
+                type="text"
+                inputMode="text"
+                autoComplete="name"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="Your name"
+                className="w-full p-3 mb-2 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900"
+              />
+            </div>
+          )}
+
           <button onClick={handleCreateSession} className={`w-full ${BTN_PRIMARY}`}>Create Game</button>
+
           <div className="flex gap-2">
             <input
               ref={codeRef}
@@ -846,7 +919,7 @@ export default function Page() {
     );
   }
 
-  // 8) Playing (route per mode)
+  // 8) Playing (routes to party modes)
   if (gameState === 'playing') {
     if (mode === 'superlatives' && round) {
       return <SuperlativesScreen
@@ -1044,7 +1117,9 @@ export default function Page() {
   return null;
 }
 
-/* ---------------------------- subcomponents ---------------------------- */
+/* ======================================================================= */
+/*                             SUBCOMPONENTS                               */
+/* ======================================================================= */
 
 function QuickstartSolo({ CATEGORIES, getQuestion, onBack }) {
   const [qsSelected, setQsSelected] = useState(['icebreakers']);
@@ -1236,7 +1311,7 @@ function FillBlankScreen({ round, players, isHost, onSubmit, onStartVoting, onVo
       {round.phase === 'collect_votes' && (
         <>
           <p className="text-center text-sm text-gray-600 dark:text-gray-300 mb-3">Vote for the best answer</p>
-        <div className="space-y-2">
+          <div className="space-y-2">
             {Object.entries(submissions).map(([uid, sub])=>(
               <button key={uid} onClick={()=>onVote(uid)}
                 className={`w-full p-3 rounded-xl border-2 text-left ${votes[auth?.currentUser?.uid]===uid ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'}`}>
