@@ -109,15 +109,20 @@ export default function Overshare() {
 
   // Modes & Party
   const [mode, setMode] = useState(null); // 'classic' | 'party' | 'solo'
-  const [partyPhase, setPartyPhase] = useState(null); // 'prompt' | 'collect' | 'results'
+  const [partyPhase, setPartyPhase] = useState(null); // 'prompt' | 'collect' | 'guess' | 'results'
   const [partyRoundType, setPartyRoundType] = useState(null); // 'superlatives' | 'fillin' | 'nhie'
   const [scores, setScores] = useState({});
   const [lives, setLives] = useState({});
   const [turnMasterId, setTurnMasterId] = useState(null);
   const [currentPromptId, setCurrentPromptId] = useState(null);
-  const [submissions, setSubmissions] = useState([]); // [{playerId, text}]
-  const [votes, setVotes] = useState([]); // see per-mode usage
+  const [submissions, setSubmissions] = useState([]); // fill-in answers
+  const [votes, setVotes] = useState([]); // superlatives votes
   const [fillinDone, setFillinDone] = useState({}); // {playerId: true}
+
+  // NHIE new maps
+  const [nhieAnswers, setNhieAnswers] = useState({}); // {playerId: 1|0}
+  const [nhieGuesses, setNhieGuesses] = useState({}); // {playerId: 1|0} by TM
+  const [nhieResults, setNhieResults] = useState([]); // [{playerId, actual, guess, correct}]
 
   // SOLO mode (local only)
   const [soloCategory, setSoloCategory] = useState('');
@@ -250,7 +255,7 @@ export default function Overshare() {
     []
   );
 
-  // Initial questions (Classic — moved after lobby)
+  // Initial questions kept for Classic
   const initialQuestions = [
     {
       id: 'personality',
@@ -365,8 +370,12 @@ export default function Overshare() {
         currentPromptId: null,
         submissions: [],
         votes: [],
-        fillinDone: {},         // NEW: {playerId: true}
-        announcement: null,     // NEW: {ts, message, emoji}
+        fillinDone: {},
+        // NHIE new
+        nhieAnswers: {},   // {playerId: 1|0}
+        nhieGuesses: {},   // {playerId: 1|0}
+        nhieResults: [],   // [{playerId, actual, guess, correct}]
+        announcement: null,
         createdAt: serverTimestamp()
       });
       return true;
@@ -435,6 +444,9 @@ export default function Overshare() {
           setSubmissions(data.submissions || []);
           setVotes(data.votes || []);
           setFillinDone(data.fillinDone || {});
+          setNhieAnswers(data.nhieAnswers || {});
+          setNhieGuesses(data.nhieGuesses || {});
+          setNhieResults(data.nhieResults || []);
 
           // Announcements → toast once
           const ann = data.announcement;
@@ -796,15 +808,19 @@ export default function Overshare() {
       currentPromptId: prompt,
       submissions: [],
       votes: [],
-      fillinDone: {}, // reset per round
+      fillinDone: {},
+      nhieAnswers: {},
+      nhieGuesses: {},
+      nhieResults: [],
       announcement: null
     });
 
     setPartyRoundType(type); setPartyPhase('prompt'); setCurrentPromptId(prompt);
     setSubmissions([]); setVotes([]); setFillinDone({});
+    setNhieAnswers({}); setNhieGuesses({}); setNhieResults([]);
   };
 
-  // —— FILL-IN: up to 2 answers, no Turn Master submissions, “I’m done” support
+  // —— FILL-IN: up to 2 answers, TM cannot submit
   const countMyFillins = useCallback(() => {
     return (submissions || []).filter(s => s.playerId === myUid).length;
   }, [submissions, myUid]);
@@ -812,7 +828,7 @@ export default function Overshare() {
   const submitFillIn = async (text) => {
     if (!sessionCode) return;
     if (!text.trim()) return;
-    if (myUid === turnMasterId) return; // Turn Master cannot submit
+    if (myUid === turnMasterId) return; // TM cannot submit
     const sessionRef = doc(db, 'sessions', sessionCode);
     const fresh = (await getDoc(sessionRef)).data() || {};
     const already = (fresh.submissions || []).filter(s => s.playerId === myUid).length;
@@ -831,7 +847,7 @@ export default function Overshare() {
     await updateDoc(sessionRef, { fillinDone: { ...curr, [myUid]: true } });
   };
 
-  // Auto-reveal when everyone (except Turn Master) is done or at 2 subs
+  // Auto-reveal when everyone (except TM) is ready in Fill-in
   useEffect(() => {
     if (!isHost) return;
     if (mode !== 'party' || partyRoundType !== 'fillin' || partyPhase !== 'collect') return;
@@ -844,98 +860,121 @@ export default function Overshare() {
     }
   }, [isHost, mode, partyRoundType, partyPhase, players, turnMasterId, submissions, fillinDone, sessionCode]);
 
-  // —— SUPERLATIVES: everyone votes for a player
+  // —— SUPERLATIVES: vote, host tallies; ties → new superlative
   const voteForSuperlative = async (targetPlayerId) => {
     if (!sessionCode) return;
     const sessionRef = doc(db, 'sessions', sessionCode);
     const fresh = (await getDoc(sessionRef)).data() || {};
-    const existing = (fresh.votes || []).filter(v => v.voterId !== myUid);
-    const next = [...existing, { voterId: myUid, targetPlayerId }];
+    const withoutMe = (fresh.votes || []).filter(v => v.voterId !== myUid);
+    const next = [...withoutMe, { voterId: myUid, targetPlayerId }];
     await updateDoc(sessionRef, { votes: next });
   };
 
-  // —— FILL-IN: Turn Master picks favorite → award immediately + Next prompt
-  const voteForFillIn = async (submissionIndex) => {
-    if (turnMasterId !== myUid) return; // only TM
-    if (!sessionCode) return;
-    const sessionRef = doc(db, 'sessions', sessionCode);
-
-    const fresh = (await getDoc(sessionRef)).data() || {};
-    const subms = fresh.submissions || [];
-    const pick = subms[submissionIndex];
-    if (!pick) return;
-    const winnerId = pick.playerId;
-
-    // Update scores & next Turn Master
-    const nextScores = { ...(fresh.scores || {}) };
-    nextScores[winnerId] = (nextScores[winnerId] || 0) + 1;
-
-    const turnMsg = `${(players.find(p=>p.id===myUid)?.name)||'Someone'} picked your answer — it's your turn!`;
-
-    await updateDoc(sessionRef, {
-      scores: nextScores,
-      turnMasterId: winnerId,
-      announcement: { ts: Date.now(), message: turnMsg, emoji: '⭐' }
-    });
-
-    // Immediately advance to next prompt (no extra confirm)
-    await startNextPartyPrompt();
-  };
-
-  // —— NHIE: store HAVE/HAVENT as submissionIndex 1/0, tally via host button
   const tallyAndAdvanceParty = async () => {
     if (!sessionCode) return;
     const sessionRef = doc(db, 'sessions', sessionCode);
     const fresh = (await getDoc(sessionRef)).data() || {};
     const type = fresh.partyRoundType;
 
-    let nextScores = { ...(fresh.scores || {}) };
-    let nextLives  = { ...(fresh.lives  || {}) };
-    let nextTurnMaster = fresh.turnMasterId;
-
     if (type === 'superlatives') {
       const counts = {};
       (fresh.votes || []).forEach(v => { if (v.targetPlayerId) counts[v.targetPlayerId] = (counts[v.targetPlayerId] || 0) + 1; });
       const ranked = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
-      if (ranked.length > 0) {
-        const topScore = ranked[0][1];
-        const topIds = ranked.filter(([_,c])=>c===topScore).map(([pid])=>pid);
-        const winnerId = topIds[Math.floor(Math.random()*topIds.length)];
+
+      if (ranked.length === 0) {
+        // nobody voted — spin a new one
+        await updateDoc(sessionRef, {
+          announcement: { ts: Date.now(), message: `No votes — new superlative!`, emoji:'🔁' }
+        });
+        await startNextPartyPrompt('superlatives');
+        return;
+      }
+
+      const topScore = ranked[0][1];
+      const topIds = ranked.filter(([_,c])=>c===topScore).map(([pid])=>pid);
+
+      if (topIds.length === 1) {
+        const winnerId = topIds[0];
+        const nextScores = { ...(fresh.scores || {}) };
         nextScores[winnerId] = (nextScores[winnerId] || 0) + 1;
         await updateDoc(sessionRef, {
           scores: nextScores,
           announcement: { ts: Date.now(), message: `${(players.find(p=>p.id===winnerId)?.name)||'Someone'} wins the round!`, emoji:'🏆' }
         });
+        await startNextPartyPrompt();
+      } else {
+        await updateDoc(sessionRef, {
+          announcement: { ts: Date.now(), message: `Tie! New superlative tiebreaker…`, emoji:'⚖️' }
+        });
+        await startNextPartyPrompt('superlatives'); // keep tiebreakers until a winner
       }
-      await startNextPartyPrompt();
       return;
     }
 
     if (type === 'nhie') {
-      const vts = fresh.votes || [];
-      vts.forEach(v => {
-        if (v.submissionIndex === 1) { // I HAVE
-          nextLives[v.voterId] = Math.max(0, (nextLives[v.voterId] ?? 10) - 1);
-        }
-      });
-      const alive = Object.entries(nextLives).filter(([_,L]) => L > 0).map(([pid])=>pid);
-      if (alive.length === 1) {
-        const lastId = alive[0];
-        nextScores[lastId] = (nextScores[lastId] || 0) + 3;
-        const resetLives = { ...nextLives };
-        Object.keys(resetLives).forEach(pid => { resetLives[pid] = 10; });
-        nextLives = resetLives;
-        await updateDoc(sessionRef, {
-          scores: nextScores,
-          lives: nextLives,
-          announcement: { ts: Date.now(), message: `${(players.find(p=>p.id===lastId)?.name)||'Someone'} is last standing in NHIE! (+3)`, emoji:'👑' }
-        });
-      } else {
-        await updateDoc(sessionRef, { lives: nextLives });
-      }
+      // Old path removed — NHIE now handled by TM guesses & scoring elsewhere.
       await startNextPartyPrompt();
       return;
     }
+  };
+
+  // —— NHIE: players submit answers; TM guesses each player; scoring both sides
+  const submitNhieAnswer = async (value /* 1=Have, 0=Havent */) => {
+    if (!sessionCode) return;
+    if (myUid === turnMasterId) return;
+    const sessionRef = doc(db,'sessions',sessionCode);
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    const answers = { ...(fresh.nhieAnswers || {}) };
+    answers[myUid] = value ? 1 : 0;
+    await updateDoc(sessionRef, { nhieAnswers: answers });
+  };
+
+  // Auto-advance to GUESS phase when all non-TM have answered
+  useEffect(() => {
+    if (!isHost) return;
+    if (mode !== 'party' || partyRoundType !== 'nhie' || partyPhase !== 'collect') return;
+    const eligible = (players || []).filter(p => p.id !== turnMasterId);
+    if (eligible.length === 0) return;
+    const ready = eligible.every(p => nhieAnswers[p.id] !== undefined);
+    if (ready && sessionCode) {
+      updateDoc(doc(db,'sessions',sessionCode), { partyPhase: 'guess' });
+      setPartyPhase('guess');
+    }
+  }, [isHost, mode, partyRoundType, partyPhase, players, turnMasterId, nhieAnswers, sessionCode]);
+
+  const submitNhieGuessesAndScore = async (guessMap /* {pid:0|1} */) => {
+    if (!sessionCode) return;
+    if (myUid !== turnMasterId) return;
+
+    const sessionRef = doc(db,'sessions',sessionCode);
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    const answers = fresh.nhieAnswers || {};
+    const nextScores = { ...(fresh.scores || {}) };
+
+    const results = [];
+    Object.keys(answers).forEach(pid => {
+      const actual = answers[pid];            // 0 or 1
+      const guess  = guessMap[pid];           // 0 or 1
+      const correct = (guess === actual);
+      results.push({ playerId: pid, actual, guess, correct });
+      if (correct) {
+        nextScores[turnMasterId] = (nextScores[turnMasterId] || 0) + 1; // TM reward
+        nextScores[pid] = (nextScores[pid] || 0) + 1;                   // player reward
+      }
+    });
+
+    await updateDoc(sessionRef, {
+      nhieGuesses: guessMap,
+      nhieResults: results,
+      scores: nextScores,
+      partyPhase: 'results',
+      announcement: { ts: Date.now(), message: `${(players.find(p=>p.id===turnMasterId)?.name)||'TM'} finished guesses!`, emoji:'✅' }
+    });
+
+    setNhieGuesses(guessMap);
+    setNhieResults(results);
+    setScores(nextScores);
+    setPartyPhase('results');
   };
 
   /* =========================
@@ -1737,8 +1776,6 @@ export default function Overshare() {
   ========================= */
   if (gameState === 'party' && mode === 'party') {
     const amHost = myUid && hostId && myUid === hostId;
-    const me = players.find(p=>p.id===myUid);
-    const myFillinCount = (submissions || []).filter(s => s.playerId === myUid).length;
     const iAmTM = turnMasterId === myUid;
 
     const playerNameById = (pid) => (players.find(p=>p.id===pid)?.name) || '—';
@@ -1749,6 +1786,10 @@ export default function Overshare() {
         <p className="text-lg leading-relaxed">{currentPromptId}</p>
       </div>
     );
+
+    // local state for NHIE guess drafting
+    const [guessDraft, setGuessDraft] = useState({}); // {pid: 0|1}
+    useEffect(() => { if (partyPhase === 'guess') setGuessDraft({}); }, [partyPhase]);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 p-4 flex items-center justify-center">
@@ -1781,30 +1822,34 @@ export default function Overshare() {
             <div className="space-y-6">
               {partyRoundType === 'superlatives' && (
                 <div className="text-sm text-gray-600 dark:text-gray-300">
-                  Everyone: you’ll vote who fits this best.
+                  Everyone: vote who fits this best. Most votes wins. Ties → new superlative.
                 </div>
               )}
               {partyRoundType === 'fillin' && (
                 <div className="text-sm text-gray-600 dark:text-gray-300">
-                  Everyone (except Turn Master): submit up to <b>2</b> short answers. You can tap “I’m done” if you only have one.
+                  Everyone (except TM): submit up to <b>2</b> short answers. TM will pick a favorite.
                 </div>
               )}
               {partyRoundType === 'nhie' && (
                 <div className="text-sm text-gray-600 dark:text-gray-300">
-                  Tap “I Have” or “I Haven’t”. Lives change after each round.
+                  Players: tap “I Have” or “I Haven’t”. Then TM will guess each player.
                 </div>
               )}
 
-              <button
-                onClick={async () => {
-                  try { playSound('click'); } catch {}
-                  await updateDoc(doc(db,'sessions',sessionCode), { partyPhase: 'collect' });
-                  setPartyPhase('collect');
-                }}
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
-              >
-                Start Round
-              </button>
+              {iAmTM ? (
+                <button
+                  onClick={async () => {
+                    try { playSound('click'); } catch {}
+                    await updateDoc(doc(db,'sessions',sessionCode), { partyPhase: 'collect' });
+                    setPartyPhase('collect');
+                  }}
+                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                >
+                  Start Round
+                </button>
+              ) : (
+                <p className="text-center text-gray-600 dark:text-gray-300">Waiting for {playerNameById(turnMasterId)} to start…</p>
+              )}
             </div>
           )}
 
@@ -1825,7 +1870,7 @@ export default function Overshare() {
                       </button>
                     ))}
                   </div>
-                  {isHost && (
+                  {amHost && (
                     <button
                       onClick={tallyAndAdvanceParty}
                       className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
@@ -1845,14 +1890,14 @@ export default function Overshare() {
                     </div>
                   ) : (
                     <FillInEntry
-                      disabled={myFillinCount >= 2 || (fillinDone || {})[myUid]}
-                      count={myFillinCount}
+                      disabled={countMyFillins() >= 2 || (fillinDone || {})[myUid]}
+                      count={countMyFillins()}
                       onSubmit={submitFillIn}
                       onDone={markFillInDone}
                     />
                   )}
 
-                  {isHost && (
+                  {amHost && (
                     <div className="text-center text-sm text-gray-600 dark:text-gray-300">
                       Submissions: {(submissions||[]).length} • Done: {Object.keys(fillinDone||{}).length}
                     </div>
@@ -1862,41 +1907,64 @@ export default function Overshare() {
 
               {partyRoundType === 'nhie' && (
                 <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={async () => {
-                        const sessionRef = doc(db,'sessions',sessionCode);
-                        const fresh = (await getDoc(sessionRef)).data() || {};
-                        const existing = (fresh.votes || []).filter(v => v.voterId !== myUid);
-                        const next = [...existing, { voterId: myUid, submissionIndex: 1 }];
-                        await updateDoc(sessionRef, { votes: next });
-                      }}
-                      className="py-3 px-6 rounded-xl font-semibold bg-white dark:bg-gray-900 border-2 border-red-400 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/10 transition"
-                    >
-                      I Have
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const sessionRef = doc(db,'sessions',sessionCode);
-                        const fresh = (await getDoc(sessionRef)).data() || {};
-                        const existing = (fresh.votes || []).filter(v => v.voterId !== myUid);
-                        const next = [...existing, { voterId: myUid, submissionIndex: 0 }];
-                        await updateDoc(sessionRef, { votes: next });
-                      }}
-                      className="py-3 px-6 rounded-xl font-semibold bg-white dark:bg-gray-900 border-2 border-green-400 text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/10 transition"
-                    >
-                      I Haven’t
-                    </button>
-                  </div>
-                  {isHost && (
-                    <button
-                      onClick={tallyAndAdvanceParty}
-                      className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
-                    >
-                      Show Results
-                    </button>
+                  {iAmTM ? (
+                    <div className="text-center text-gray-700 dark:text-gray-200">
+                      <LoadingSpinner />
+                      <p className="mt-3">Waiting for players to answer…</p>
+                    </div>
+                  ) : (
+                    <NhieCollect
+                      myAnswer={nhieAnswers[myUid]}
+                      onAnswer={(val)=>submitNhieAnswer(val)}
+                    />
                   )}
                 </>
+              )}
+            </div>
+          )}
+
+          {/* PHASE: GUESS (NHIE only) */}
+          {partyPhase === 'guess' && partyRoundType === 'nhie' && (
+            <div className="space-y-4">
+              {iAmTM ? (
+                <>
+                  <p className="text-gray-700 dark:text-gray-200">Guess each player:</p>
+                  <div className="space-y-2">
+                    {players.filter(p=>p.id!==turnMasterId).map(p => {
+                      const val = guessDraft[p.id];
+                      return (
+                        <div key={p.id} className="flex items-center justify-between p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600">
+                          <span>{p.name}</span>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={()=>setGuessDraft(g=>({ ...g, [p.id]: 1 }))}
+                              className={`px-3 py-1 rounded-lg border-2 ${val===1 ? 'border-red-500 text-red-600' : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'}`}
+                            >
+                              I Have
+                            </button>
+                            <button
+                              onClick={()=>setGuessDraft(g=>({ ...g, [p.id]: 0 }))}
+                              className={`px-3 py-1 rounded-lg border-2 ${val===0 ? 'border-green-500 text-green-600' : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200'}`}
+                            >
+                              I Haven’t
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={()=>submitNhieGuessesAndScore(guessDraft)}
+                    className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                  >
+                    Submit Guesses
+                  </button>
+                </>
+              ) : (
+                <div className="text-center text-gray-700 dark:text-gray-200">
+                  <LoadingSpinner />
+                  <p className="mt-3">Waiting for {playerNameById(turnMasterId)} to guess…</p>
+                </div>
               )}
             </div>
           )}
@@ -1917,7 +1985,7 @@ export default function Overshare() {
                       );
                     })}
                   </div>
-                  {isHost && (
+                  {amHost && (
                     <button
                       onClick={tallyAndAdvanceParty}
                       className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
@@ -1931,36 +1999,47 @@ export default function Overshare() {
               {partyRoundType === 'fillin' && (
                 <>
                   <p className="text-gray-700 dark:text-gray-200">Pick your favorite:</p>
-                  <div className="space-y-2">
-                    {submissionsAnon.map((s, i) => (
-                      <button
-                        key={i}
-                        onClick={() => voteForFillIn(i)}      // instant award + next prompt
-                        disabled={!iAmTM}
-                        className={`w-full p-4 rounded-xl border-2 ${iAmTM ? 'hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20' : 'opacity-60 cursor-not-allowed'} border-gray-200 dark:border-gray-600 text-left`}
-                      >
-                        <span className="font-mono mr-2">{s.label}.</span> {s.text}
-                      </button>
-                    ))}
-                  </div>
-                  {!iAmTM && <p className="text-sm text-gray-500 dark:text-gray-400 text-center mt-2">Waiting for {playerNameById(turnMasterId)} to choose…</p>}
+                  {iAmTM ? (
+                    <div className="space-y-2">
+                      {submissionsAnon.map((s, i) => (
+                        <button
+                          key={i}
+                          onClick={() => voteForFillIn(i)}
+                          className="w-full p-4 rounded-xl border-2 hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 border-gray-200 dark:border-gray-600 text-left"
+                        >
+                          <span className="font-mono mr-2">{s.label}.</span> {s.text}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Waiting for {playerNameById(turnMasterId)} to choose…</p>
+                  )}
                 </>
               )}
 
               {partyRoundType === 'nhie' && (
                 <>
-                  <p className="text-gray-700 dark:text-gray-200">Lives after this round:</p>
-                  <div className="space-y-1 text-sm">
-                    {players.map(p => (
-                      <div key={p.id} className="flex items-center justify-between">
-                        <span>{p.name}</span><span className="font-semibold">{(lives || {})[p.id] ?? 10}</span>
-                      </div>
-                    ))}
+                  <p className="text-gray-700 dark:text-gray-200">Results:</p>
+                  <div className="space-y-2 text-sm">
+                    {players.filter(p=>p.id!==turnMasterId).map(p=>{
+                      const r = (nhieResults || []).find(x=>x.playerId===p.id);
+                      const actual = r?.actual === 1 ? 'I Have' : 'I Haven’t';
+                      const guess  = r?.guess  === 1 ? 'I Have' : 'I Haven’t';
+                      const ok = r?.correct;
+                      return (
+                        <div key={p.id} className={`flex items-center justify-between p-3 rounded-xl border-2 ${ok ? 'border-green-400' : 'border-gray-300 dark:border-gray-600'}`}>
+                          <span className="font-medium">{p.name}</span>
+                          <span className="mx-2">said <b>{actual}</b></span>
+                          <span className="mx-2">TM guessed <b>{guess}</b></span>
+                          {ok ? <span className="ml-2">✅</span> : <span className="ml-2">❌</span>}
+                        </div>
+                      );
+                    })}
                   </div>
-                  {isHost && (
+                  {(amHost || iAmTM) && (
                     <button
                       onClick={startNextPartyPrompt}
-                      className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                      className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
                     >
                       Next Round
                     </button>
@@ -2017,6 +2096,37 @@ function FillInEntry({ onSubmit, onDone, disabled, count }) {
           I’m done
         </button>
       </div>
+    </div>
+  );
+}
+
+function NhieCollect({ myAnswer, onAnswer }) {
+  // myAnswer: undefined | 0 | 1
+  return (
+    <div className="space-y-3">
+      {myAnswer === undefined ? (
+        <>
+          <p className="text-gray-700 dark:text-gray-200">Choose one:</p>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={()=>onAnswer(1)}
+              className="py-3 px-6 rounded-xl font-semibold bg-white dark:bg-gray-900 border-2 border-red-400 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/10 transition"
+            >
+              I Have
+            </button>
+            <button
+              onClick={()=>onAnswer(0)}
+              className="py-3 px-6 rounded-xl font-semibold bg-white dark:bg-gray-900 border-2 border-green-400 text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/10 transition"
+            >
+              I Haven’t
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="text-center text-green-600 dark:text-green-300 font-medium">
+          ✅ Answer submitted — waiting for others…
+        </div>
+      )}
     </div>
   );
 }
