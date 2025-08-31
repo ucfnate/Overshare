@@ -254,7 +254,7 @@ export default function Overshare() {
     ensureAuth();
   }, []);
 
-  // derive host flag from players + myUid (more reliable than pushing state)
+  // derive host flag from players + myUid
   useEffect(() => {
     if (!myUid) return;
     const me = (players || []).find(p => p?.id === myUid);
@@ -567,6 +567,9 @@ export default function Overshare() {
     const user = await ensureAuthed();
     const uid = user?.uid || `guest_${Date.now()}`;
 
+    // NEW: lock in UID ASAP
+    setMyUid(uid);
+
     // requested debug line
     console.log('[create] uid:', uid);
 
@@ -600,6 +603,9 @@ export default function Overshare() {
 
     const user = await ensureAuthed();
     const uid = user?.uid || `guest_${Date.now()}`;
+
+    // NEW: lock in UID ASAP
+    setMyUid(uid);
 
     const sessionRef = doc(db, 'sessions', code);
     const snap = await getDoc(sessionRef);
@@ -1215,7 +1221,11 @@ export default function Overshare() {
      Screens: Waiting Room
   ========================= */
   if (gameState === 'waitingRoom') {
-    const alreadyIn = !!players.find((p) => p?.id === myUid);
+    // NEW: treat host or name matches as "already in"
+    const alreadyIn =
+      isHost ||
+      players.some(p => p?.id === myUid) ||
+      (playerName && players.some(p => (p?.name || '').toLowerCase() === playerName.trim().toLowerCase()));
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
@@ -1295,7 +1305,8 @@ export default function Overshare() {
                 await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'categoryVoting' });
                 setGameState('categoryVoting');
               }}
-              disabled={players.length < 2}
+              // NEW: allow solo start during dev
+              disabled={players.length < 1}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Start Game
@@ -1715,7 +1726,7 @@ export default function Overshare() {
     const roundNo = players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1;
     const turnNo = players.length ? ((turnHistory.length || 0) % players.length) + 1 : 1;
 
-    // Route party modes
+    // Party mode routes
     if (round?.mode === 'superlatives') {
       return (
         <SuperlativesScreen
