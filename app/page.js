@@ -16,7 +16,10 @@ import {
   VolumeX,
   SkipForward,
   HelpCircle,
-  X
+  X,
+  Swords,
+  Crown,
+  Wand2
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import {
@@ -28,10 +31,15 @@ import {
   serverTimestamp,
   arrayUnion
 } from 'firebase/firestore';
+
 import {
   questionCategories as qcImport,
   getRandomQuestion as getRandomQImport
 } from '../lib/questionCategories';
+
+import { superlativesPrompts, getRandomSuperlative } from '../lib/superlatives';
+import { fillInPrompts, getRandomFillIn } from '../lib/fillin';
+import { nhiePrompts, getRandomNHIE } from '../lib/nhie';
 
 /* =========================
    Helpers
@@ -50,6 +58,15 @@ function getOrMakeDeviceId() {
   }
 }
 
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /* =========================
    Main Component
 ========================= */
@@ -57,16 +74,16 @@ export default function Overshare() {
   /* =========================
      State
   ========================= */
-  const [gameState, setGameState] = useState('welcome');
+  const [gameState, setGameState] = useState('welcome'); // welcome -> modeMenu -> ...
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
-
   const [myUid, setMyUid] = useState('');
   const [hostId, setHostId] = useState('');
 
+  // Core shared state
   const [players, setPlayers] = useState([]);
-  const [surveyAnswers, setSurveyAnswers] = useState({});
+  const [surveyAnswers, setSurveyAnswers] = useState({}); // reserved for Classic initial Qs
   const [relationshipAnswers, setRelationshipAnswers] = useState({});
 
   const [currentQuestion, setCurrentQuestion] = useState('');
@@ -88,8 +105,23 @@ export default function Overshare() {
   const [maxSkipsPerTurn] = useState(1);
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
-
   const [joinLoading, setJoinLoading] = useState(false);
+
+  // Modes & Party
+  const [mode, setMode] = useState(null); // 'classic' | 'party' | 'solo'
+  const [partyPhase, setPartyPhase] = useState(null); // 'prompt' | 'collect' | 'results'
+  const [partyRoundType, setPartyRoundType] = useState(null); // 'superlatives' | 'fillin' | 'nhie'
+  const [scores, setScores] = useState({}); // {playerId: number}
+  const [lives, setLives] = useState({});  // {playerId: number}, NHIE
+  const [turnMasterId, setTurnMasterId] = useState(null);
+  const [currentPromptId, setCurrentPromptId] = useState(null);
+  const [submissions, setSubmissions] = useState([]); // [{playerId, text}]
+  const [votes, setVotes] = useState([]); // [{voterId, targetPlayerId? , submissionIndex?}]
+
+  // SOLO mode (local only)
+  const [soloCategory, setSoloCategory] = useState('');
+  const [soloQuestion, setSoloQuestion] = useState('');
+  const [soloHistory, setSoloHistory] = useState([]);
 
   /* =========================
      Refs
@@ -99,7 +131,7 @@ export default function Overshare() {
   const audioCtxRef = useRef(null);
 
   /* =========================
-     Init: load device id + saved name
+     Init: device id + saved name
   ========================= */
   useEffect(() => {
     try {
@@ -114,18 +146,10 @@ export default function Overshare() {
      Config / Memos
   ========================= */
   const iconMap = useMemo(
-    () => ({
-      Sparkles,
-      Heart,
-      Lightbulb,
-      Target,
-      Flame,
-      MessageCircle
-    }),
+    () => ({ Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle }),
     []
   );
 
-  // Fallback categories (used only if import is missing/shape is different)
   const FALLBACK_CATEGORIES = useMemo(
     () => ({
       icebreakers: {
@@ -162,7 +186,6 @@ export default function Overshare() {
     []
   );
 
-  // Resolve categories regardless of export style (named vs default)
   const CATEGORIES = useMemo(() => {
     const raw =
       qcImport && typeof qcImport === 'object'
@@ -170,20 +193,17 @@ export default function Overshare() {
             ? qcImport.default
             : qcImport)
         : {};
-
     const keys = Object.keys(raw || {});
     if (keys.length > 0) return raw;
-
     return FALLBACK_CATEGORIES;
   }, [FALLBACK_CATEGORIES]);
 
-  // Are we using the external library?
   const libraryOK = useMemo(() => {
     const usingFallback = CATEGORIES === FALLBACK_CATEGORIES;
     return (typeof getRandomQImport === 'function') && !usingFallback;
   }, [CATEGORIES, FALLBACK_CATEGORIES]);
 
-  // Safe question getter
+  // Question fetcher (library-first)
   const getQuestion = useCallback(
     (categoryKey, exclude = []) => {
       if (typeof getRandomQImport === 'function') {
@@ -228,7 +248,8 @@ export default function Overshare() {
     []
   );
 
-  const initialSurveyQuestions = [
+  // Initial questions (moved to Classic after lobby)
+  const initialQuestions = [
     {
       id: 'personality',
       question: 'How would you describe yourself in social settings?',
@@ -271,18 +292,8 @@ export default function Overshare() {
     }
   ];
 
-  const relationshipOptions = [
-    'Romantic partner/spouse',
-    'Close friend (know each other well)',
-    'Friend (hang out regularly)',
-    'Family member',
-    'Coworker/colleague',
-    "Acquaintance (don't know well)",
-    'Just met/new friend'
-  ];
-
   /* =========================
-     Audio (no eval, CSP-safe)
+     Audio
   ========================= */
   const getAudio = () => {
     if (!audioEnabled) return null;
@@ -293,50 +304,24 @@ export default function Overshare() {
         audioCtxRef.current = new Ctx();
       }
       return audioCtxRef.current;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   };
 
   const playSound = (type) => {
     const audio = getAudio();
     if (!audio) return;
-
     const tone = (seq) => {
       const osc = audio.createOscillator();
       const gain = audio.createGain();
-      osc.connect(gain);
-      gain.connect(audio.destination);
+      osc.connect(gain); gain.connect(audio.destination);
       gain.gain.setValueAtTime(0.1, audio.currentTime);
-      seq(osc, gain, audio.currentTime);
-      osc.start();
+      seq(osc, gain, audio.currentTime); osc.start();
     };
-
     const sounds = {
-      click: () =>
-        tone((osc, gain, t0) => {
-          osc.frequency.setValueAtTime(800, t0);
-          osc.frequency.exponentialRampToValueAtTime(600, t0 + 0.1);
-          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.1);
-          osc.stop(t0 + 0.1);
-        }),
-      success: () =>
-        tone((osc, gain, t0) => {
-          osc.frequency.setValueAtTime(523, t0);
-          osc.frequency.setValueAtTime(659, t0 + 0.1);
-          osc.frequency.setValueAtTime(784, t0 + 0.2);
-          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
-          osc.stop(t0 + 0.3);
-        }),
-      turnTransition: () =>
-        tone((osc, gain, t0) => {
-          osc.frequency.setValueAtTime(440, t0);
-          osc.frequency.setValueAtTime(554, t0 + 0.15);
-          gain.gain.exponentialRampToValueAtTime(0.01, t0 + 0.3);
-          osc.stop(t0 + 0.3);
-        })
+      click: () => tone((o,g,t) => { o.frequency.setValueAtTime(800,t); o.frequency.exponentialRampToValueAtTime(600,t+0.1); g.gain.exponentialRampToValueAtTime(0.01,t+0.1); o.stop(t+0.1); }),
+      success: () => tone((o,g,t) => { o.frequency.setValueAtTime(523,t); o.frequency.setValueAtTime(659,t+0.1); o.frequency.setValueAtTime(784,t+0.2); g.gain.exponentialRampToValueAtTime(0.01,t+0.3); o.stop(t+0.3); }),
+      turnTransition: () => tone((o,g,t) => { o.frequency.setValueAtTime(440,t); o.frequency.setValueAtTime(554,t+0.15); g.gain.exponentialRampToValueAtTime(0.01,t+0.3); o.stop(t+0.3); })
     };
-
     if (sounds[type]) sounds[type]();
   };
 
@@ -350,99 +335,34 @@ export default function Overshare() {
   };
 
   /* =========================
-     Algorithms (category logic)
-  ========================= */
-  const calculateGroupIntimacy = (relationships) => {
-    if (!relationships || Object.keys(relationships).length === 0) return 2;
-    const intimacyMap = {
-      'Romantic partner/spouse': 5,
-      'Close friend (know each other well)': 4,
-      'Friend (hang out regularly)': 3,
-      'Family member': 4,
-      'Coworker/colleague': 2,
-      "Acquaintance (don't know well)": 1,
-      'Just met/new friend': 1
-    };
-    const scores = Object.values(relationships).map((rel) => intimacyMap[rel] || 2);
-    return scores.reduce((a, b) => a + b, 0) / scores.length;
-  };
-
-  const getGroupComfortLevel = (list) => {
-    if (!list || list.length === 0) return 2;
-    const comfortMap = {
-      'Light, fun topics that make everyone laugh': 2,
-      'Mix of light and meaningful discussions': 3,
-      'Deep, personal conversations': 4,
-      'Thought-provoking questions about life': 4
-    };
-    const scores =
-      list
-        .filter((p) => p?.surveyAnswers?.comfort_level)
-        .map((p) => comfortMap[p.surveyAnswers.comfort_level] || 2) || [];
-    if (scores.length === 0) return 2;
-    return scores.reduce((a, b) => a + b, 0) / scores.length;
-  };
-
-  const recommendCategories = (list, relationships) => {
-    const intimacy = calculateGroupIntimacy(relationships);
-    const comfort = getGroupComfortLevel(list);
-    const groupSize = list?.length || 0;
-    const rec = [];
-    if (groupSize > 3 || intimacy < 3) rec.push('icebreakers');
-    if (groupSize > 2) rec.push('creative');
-    if (intimacy >= 3 && comfort >= 3) rec.push('deep_dive');
-    if (intimacy >= 4 || (groupSize === 2 && intimacy >= 3)) rec.push('growth');
-    if (intimacy >= 4 && comfort >= 4 && groupSize <= 4) rec.push('spicy');
-    return rec;
-  };
-
-  const generatePersonalizedQuestion = (list, surveyData, relationships, forceCategory = null) => {
-    let category = forceCategory;
-    if (!category) {
-      if ((selectedCategories || []).length === 0) {
-        const rec = recommendCategories(list, relationships);
-        category = rec[Math.floor(Math.random() * (rec.length || 1))] || 'icebreakers';
-      } else {
-        category =
-          selectedCategories[Math.floor(Math.random() * selectedCategories.length)] ||
-          'icebreakers';
-      }
-    }
-    const question = getQuestion(category);
-    setCurrentCategory(category);
-    return question;
-  };
-
-  const calculateTopCategories = (votes) => {
-    const byPlayer = votes || {};
-    const voteCount = {};
-    Object.values(byPlayer).forEach((playerVotes) => {
-      (playerVotes || []).forEach((cat) => {
-        voteCount[cat] = (voteCount[cat] || 0) + 1;
-      });
-    });
-    const sorted = Object.entries(voteCount).sort((a, b) => b[1] - a[1]).map(([k]) => k);
-    return sorted.slice(0, Math.min(4, Math.max(3, sorted.length)));
-  };
-
-  /* =========================
-     Firestore Session Helpers
+     Session Helpers (Firestore)
   ========================= */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
         hostId: hostPlayer.id,
         players: [hostPlayer],
+        // classic fields
         currentQuestion: '',
         currentCategory: '',
         currentQuestionAsker: '',
-        gameState: 'waitingRoom',
         selectedCategories: [],
         currentTurnIndex: 0,
         availableCategories: [],
         usedCategories: [],
         turnHistory: [],
         categoryVotes: {},
+        // mode fields
+        mode: null,               // 'classic' or 'party' (null until host chooses)
+        gameState: 'waitingRoom', // classic uses existing states
+        partyPhase: null,
+        partyRoundType: null,
+        scores: {},
+        lives: {},
+        turnMasterId: null,
+        currentPromptId: null,
+        submissions: [],
+        votes: [],
         createdAt: serverTimestamp()
       });
       return true;
@@ -455,11 +375,7 @@ export default function Overshare() {
   const listenToSession = useCallback(
     (code) => {
       if (!code) return () => {};
-
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
+      if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
 
       const sessionRef = doc(db, 'sessions', code);
       let previousPlayerCount = 0;
@@ -470,52 +386,54 @@ export default function Overshare() {
           if (!snap.exists()) return;
           const data = snap.data() || {};
 
+          // host / me
           setHostId(data.hostId || '');
           setIsHost((myUid && data.hostId && myUid === data.hostId) || false);
 
+          // players
           const newCount = (data.players || []).length;
           if (previousPlayerCount > 0 && newCount > previousPlayerCount) {
             const newPlayer = (data.players || [])[newCount - 1];
             if (newPlayer && newPlayer.name !== playerName) {
               showNotification(`${newPlayer.name} joined the game!`, '👋');
-              try {
-                playSound('success');
-              } catch {}
+              try { playSound('success'); } catch {}
             }
           }
           previousPlayerCount = newCount;
 
           setPlayers([...(data.players || [])]);
+
+          // classic fields
           setCurrentQuestion(data.currentQuestion || '');
           setCurrentCategory(data.currentCategory || '');
           setCurrentQuestionAsker(data.currentQuestionAsker || '');
           setSelectedCategories([...(data.selectedCategories || [])]);
-          setCurrentTurnIndex(
-            typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0
-          );
+          setCurrentTurnIndex(typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0);
           setAvailableCategories([...(data.availableCategories || [])]);
           setUsedCategories([...(data.usedCategories || [])]);
           setTurnHistory([...(data.turnHistory || [])]);
           setCategoryVotes(data.categoryVotes || {});
 
-          const incomingRaw = data.gameState || 'waitingRoom';
-          const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
-
-          const incomingTurn =
-            typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
+          const incomingTurn = typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
           if (incomingTurn !== prevTurnIndexRef.current) {
             setSkipsUsedThisTurn(0);
             prevTurnIndexRef.current = incomingTurn;
           }
 
-          if (incoming !== gameState) {
-            setGameState(incoming);
-            if (incoming === 'playing') {
-              try { playSound('success'); } catch {}
-            } else if (incoming === 'categoryPicking') {
-              try { playSound('turnTransition'); } catch {}
-            }
-          }
+          // mode & party
+          setMode(data.mode || null);
+          setPartyPhase(data.partyPhase || null);
+          setPartyRoundType(data.partyRoundType || null);
+          setScores(data.scores || {});
+          setLives(data.lives || {});
+          setTurnMasterId(data.turnMasterId || null);
+          setCurrentPromptId(data.currentPromptId || null);
+          setSubmissions(data.submissions || []);
+          setVotes(data.votes || []);
+
+          // gameState
+          const incoming = data.gameState || 'waitingRoom';
+          if (incoming !== gameState) setGameState(incoming);
         },
         (error) => {
           console.error('Firebase listener error:', error);
@@ -530,32 +448,17 @@ export default function Overshare() {
 
   useEffect(() => {
     return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
-      try {
-        if (audioCtxRef.current?.close) audioCtxRef.current.close();
-      } catch {}
+      if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
+      try { if (audioCtxRef.current?.close) audioCtxRef.current.close(); } catch {}
     };
   }, []);
 
   /* =========================
-     Handlers: Survey & Session
+     Create / Join
   ========================= */
-  const handleSurveySubmit = () => {
-    if (Object.keys(surveyAnswers).length === initialSurveyQuestions.length) {
-      try { playSound('success'); } catch {}
-      setGameState('createOrJoin');
-    }
-  };
-
   const handleCreateSession = async () => {
     const name = (playerName || '').trim();
-    if (!name) {
-      alert('Enter your name');
-      return;
-    }
+    if (!name) { alert('Enter your name'); return; }
     try { localStorage.setItem('overshare:name', name); } catch {}
 
     const uid = myUid || getOrMakeDeviceId();
@@ -564,18 +467,11 @@ export default function Overshare() {
 
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const hostPlayer = {
-      id: uid,
-      name,
-      isHost: true,
-      surveyAnswers,
-      joinedAt: new Date().toISOString()
+      id: uid, name, isHost: true, surveyAnswers: {}, joinedAt: new Date().toISOString()
     };
 
     const ok = await createFirebaseSession(code, hostPlayer);
-    if (!ok) {
-      alert('Failed to create session. Please try again.');
-      return;
-    }
+    if (!ok) { alert('Failed to create session. Please try again.'); return; }
 
     setSessionCode(code);
     setIsHost(true);
@@ -587,18 +483,12 @@ export default function Overshare() {
 
   const handleJoinSession = async () => {
     const name = (playerName || '').trim();
-    if (!name) {
-      alert('Enter your name');
-      return;
-    }
+    if (!name) { alert('Enter your name'); return; }
     try { localStorage.setItem('overshare:name', name); } catch {}
 
     const raw = (sessionCode || '').trim();
     const code = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    if (!code) {
-      alert('Enter a valid session code');
-      return;
-    }
+    if (!code) { alert('Enter a valid session code'); return; }
 
     setJoinLoading(true);
     const uid = myUid || getOrMakeDeviceId();
@@ -607,22 +497,12 @@ export default function Overshare() {
 
     const sessionRef = doc(db, 'sessions', code);
     let snap;
-    try {
-      snap = await getDoc(sessionRef);
-    } catch (e) {
-      console.error('[join] getDoc error', e);
-      alert(`Could not look up game (${e?.code || 'network'}).`);
-      setJoinLoading(false);
-      return;
-    }
+    try { snap = await getDoc(sessionRef); }
+    catch (e) { console.error('[join] getDoc error', e); alert(`Could not look up game (${e?.code || 'network'}).`); setJoinLoading(false); return; }
 
-    if (!snap.exists()) {
-      alert('Session not found. Double-check the code.');
-      setJoinLoading(false);
-      return;
-    }
+    if (!snap.exists()) { alert('Session not found. Double-check the code.'); setJoinLoading(false); return; }
 
-    // Move user to the lobby + start listener early (better UX)
+    // Move to lobby + listen
     setSessionCode(code);
     listenToSession(code);
     setGameState('waitingRoom');
@@ -632,26 +512,16 @@ export default function Overshare() {
 
     if (!alreadyIn) {
       const newPlayer = {
-        id: uid,
-        name,
-        isHost: false,
-        surveyAnswers,
-        relationshipAnswers: {},
-        joinedAt: new Date().toISOString()
+        id: uid, name, isHost: false, surveyAnswers: {}, relationshipAnswers: {}, joinedAt: new Date().toISOString()
       };
-
       try {
         await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
         console.log('[join] arrayUnion ok');
       } catch (err) {
-        console.warn('[join] arrayUnion failed, attempting manual merge', err?.code, err?.message);
-        if (err?.code === 'permission-denied') {
-          alert('Permission denied joining this game. Check Firestore rules for /sessions writes.');
-        }
+        console.warn('[join] arrayUnion failed, manual merge', err?.code, err?.message);
         try {
           const fresh = (await getDoc(sessionRef)).data() || {};
-          const next = [...(fresh.players || []), newPlayer]
-            .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i);
+          const next = [...(fresh.players || []), newPlayer].filter((p,i,a)=>a.findIndex(x=>x.id===p.id)===i);
           await updateDoc(sessionRef, { players: next });
           console.log('[join] manual merge ok');
         } catch (e2) {
@@ -668,8 +538,29 @@ export default function Overshare() {
   };
 
   /* =========================
-     Handlers: Relationship Survey & Voting
+     Classic — initial Qs & relationship survey
   ========================= */
+  const handleInitialQsSubmit = async () => {
+    if (!sessionCode) return;
+    try {
+      const sessionRef = doc(db, 'sessions', sessionCode);
+      const snap = await getDoc(sessionRef); if (!snap.exists()) return;
+      const data = snap.data() || {};
+      const updatedPlayers = (data.players || []).map(p => p.id === myUid ? { ...p, surveyAnswers } : p);
+      await updateDoc(sessionRef, { players: updatedPlayers });
+
+      const allDone = updatedPlayers.every(p => p?.surveyAnswers && Object.keys(p.surveyAnswers).length === initialQuestions.length);
+      if (allDone) {
+        await updateDoc(sessionRef, { gameState: 'relationshipSurvey' });
+        setGameState('relationshipSurvey');
+      } else {
+        setGameState('waitingForOthers');
+      }
+    } catch (e) {
+      console.error('InitialQs submit error:', e);
+    }
+  };
+
   const handleRelationshipSurveySubmit = async () => {
     if (!sessionCode) return;
     try {
@@ -686,19 +577,14 @@ export default function Overshare() {
 
       const allCompleted = updatedPlayers.every((p) => p?.relationshipAnswers);
       if (allCompleted) {
-        const top =
-          (data.selectedCategories && data.selectedCategories.length > 0)
-            ? data.selectedCategories
-            : Object.keys(CATEGORIES);
+        const top = (data.selectedCategories && data.selectedCategories.length > 0)
+          ? data.selectedCategories : Object.keys(CATEGORIES);
 
         await updateDoc(sessionRef, {
-          gameState: 'categoryPicking',
-          currentTurnIndex: 0,
-          availableCategories: top,
-          usedCategories: [],
-          turnHistory: []
+          gameState: 'categoryVoting',
+          selectedCategories: top
         });
-        setGameState('categoryPicking');
+        setGameState('categoryVoting');
         try { playSound('success'); } catch {}
       } else {
         setGameState('waitingForOthers');
@@ -708,6 +594,9 @@ export default function Overshare() {
     }
   };
 
+  /* =========================
+     Category Voting & Classic play (unchanged)
+  ========================= */
   const handleCategoryVote = async (selectedCats) => {
     if (!sessionCode) return;
     try {
@@ -741,21 +630,30 @@ export default function Overshare() {
     }
   };
 
-  /* =========================
-     Handlers: Picking / Playing Flow
-  ========================= */
+  const calculateTopCategories = (votes) => {
+    const byPlayer = votes || {};
+    const voteCount = {};
+    Object.values(byPlayer).forEach((playerVotes) => {
+      (playerVotes || []).forEach((cat) => { voteCount[cat] = (voteCount[cat] || 0) + 1; });
+    });
+    const sorted = Object.entries(voteCount).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+    return sorted.slice(0, Math.min(4, Math.max(3, sorted.length)));
+  };
+
+  const generatePersonalizedQuestion = (list, surveyData, relationships, forceCategory = null) => {
+    let category = forceCategory || currentCategory || 'icebreakers';
+    const question = getQuestion(category);
+    setCurrentCategory(category);
+    return question;
+  };
+
   const handleCategoryPicked = async (category) => {
     if (!sessionCode) return;
     try {
       const currentPlayer = players[currentTurnIndex] || players[0];
       if (!currentPlayer) return;
 
-      const question = generatePersonalizedQuestion(
-        players,
-        surveyAnswers,
-        relationshipAnswers,
-        category
-      );
+      const question = generatePersonalizedQuestion(players, surveyAnswers, relationshipAnswers, category);
 
       const newUsed = [...usedCategories, category];
       const newAvail = (availableCategories || []).filter((c) => c !== category);
@@ -779,9 +677,7 @@ export default function Overshare() {
       setTurnHistory(newHistory);
       setGameState('playing');
       try { playSound('success'); } catch {}
-    } catch (err) {
-      console.error('Error in handleCategoryPicked:', err);
-    }
+    } catch (err) { console.error('Error in handleCategoryPicked:', err); }
   };
 
   const handleSkipQuestion = async () => {
@@ -791,12 +687,7 @@ export default function Overshare() {
     }
     if (!sessionCode) return;
 
-    const forcedCategory =
-      currentCategory ||
-      (turnHistory[turnHistory.length - 1]?.category) ||
-      (selectedCategories[0]) ||
-      'icebreakers';
-
+    const forcedCategory = currentCategory || (turnHistory[turnHistory.length - 1]?.category) || (selectedCategories[0]) || 'icebreakers';
     const newQuestion = getQuestion(forcedCategory, [currentQuestion]);
 
     try {
@@ -808,25 +699,18 @@ export default function Overshare() {
       setCurrentCategory(forcedCategory);
       setSkipsUsedThisTurn((n) => n + 1);
       try { playSound('click'); } catch {}
-    } catch (err) {
-      console.error('Error skipping question:', err);
-    }
+    } catch (err) { console.error('Error skipping question:', err); }
   };
 
   const handleNextQuestion = async () => {
     if (!sessionCode) return;
     try {
-      const count = players.length || 0;
-      if (count === 0) return;
-
+      const count = players.length || 0; if (count === 0) return;
       const nextTurnIndex = (currentTurnIndex + 1) % count;
 
       let newAvailable = availableCategories;
       let newUsed = usedCategories;
-      if ((availableCategories || []).length === 0) {
-        newAvailable = [...(selectedCategories || [])];
-        newUsed = [];
-      }
+      if ((availableCategories || []).length === 0) { newAvailable = [...(selectedCategories || [])]; newUsed = []; }
 
       await updateDoc(doc(db, 'sessions', sessionCode), {
         gameState: 'categoryPicking',
@@ -841,19 +725,175 @@ export default function Overshare() {
       setCurrentTurnIndex(nextTurnIndex);
       setAvailableCategories(newAvailable);
       setUsedCategories(newUsed);
-      setCurrentQuestion('');
-      setCurrentCategory('');
-      setCurrentQuestionAsker('');
-      setGameState('categoryPicking');
-      setSkipsUsedThisTurn(0);
+      setCurrentQuestion(''); setCurrentCategory(''); setCurrentQuestionAsker('');
+      setGameState('categoryPicking'); setSkipsUsedThisTurn(0);
       try { playSound('turnTransition'); } catch {}
-    } catch (err) {
-      console.error('Error in handleNextQuestion:', err);
-    }
+    } catch (err) { console.error('Error in handleNextQuestion:', err); }
   };
 
   /* =========================
-     UI: Top Bar / Modals / Partials
+     PARTY MODE — helpers
+  ========================= */
+  const initPartyIfNeeded = async () => {
+    if (!sessionCode) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const snap = await getDoc(sessionRef); if (!snap.exists()) return;
+    const data = snap.data() || {};
+
+    const baseScores = { ...(data.scores || {}) };
+    const baseLives  = { ...(data.lives  || {}) };
+
+    (data.players || []).forEach(p => {
+      if (baseScores[p.id] == null) baseScores[p.id] = 0;
+      if (baseLives[p.id]  == null) baseLives[p.id]  = 10;
+    });
+
+    const firstTurnMaster = data.turnMasterId || data.hostId;
+
+    await updateDoc(sessionRef, {
+      scores: baseScores,
+      lives: baseLives,
+      turnMasterId: firstTurnMaster
+    });
+
+    setScores(baseScores); setLives(baseLives); setTurnMasterId(firstTurnMaster);
+  };
+
+  const pickNextPartyRoundType = (lastType = null) => {
+    // 1:1:1 ratio → simple random across three types (avoid repeating if possible)
+    const types = ['superlatives', 'fillin', 'nhie'];
+    let pool = types;
+    if (lastType) pool = types.filter(t => t !== lastType);
+    return pool[Math.floor(Math.random() * pool.length)];
+  };
+
+  const startNextPartyPrompt = async (forceType = null) => {
+    if (!sessionCode) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const snap = await getDoc(sessionRef); if (!snap.exists()) return;
+    const data = snap.data() || {};
+
+    const type = forceType || pickNextPartyRoundType(data.partyRoundType);
+    let prompt = null;
+
+    const used = new Set([...(data.turnHistory || [])].map(h => h?.prompt));
+    if (type === 'superlatives') prompt = getRandomSuperlative(used);
+    if (type === 'fillin')       prompt = getRandomFillIn(used);
+    if (type === 'nhie')         prompt = getRandomNHIE(used);
+
+    await updateDoc(sessionRef, {
+      partyRoundType: type,
+      partyPhase: 'prompt',
+      currentPromptId: prompt,
+      submissions: [],
+      votes: []
+    });
+
+    setPartyRoundType(type); setPartyPhase('prompt'); setCurrentPromptId(prompt);
+    setSubmissions([]); setVotes([]);
+  };
+
+  const submitFillIn = async (text) => {
+    if (!sessionCode) return;
+    if (!text.trim()) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    const existing = (fresh.submissions || []).filter(s => s.playerId !== myUid);
+    const next = [...existing, { playerId: myUid, text: text.trim() }];
+    await updateDoc(sessionRef, { submissions: next });
+  };
+
+  const voteForSuperlative = async (targetPlayerId) => {
+    if (!sessionCode) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    const existing = (fresh.votes || []).filter(v => v.voterId !== myUid);
+    const next = [...existing, { voterId: myUid, targetPlayerId }];
+    await updateDoc(sessionRef, { votes: next });
+  };
+
+  const voteForFillIn = async (submissionIndex) => {
+    // Only Turn Master selects winner
+    if (turnMasterId !== myUid) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    await updateDoc(sessionRef, { votes: [{ voterId: myUid, submissionIndex }] });
+  };
+
+  const tallyAndAdvanceParty = async () => {
+    if (!sessionCode) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const fresh = (await getDoc(sessionRef)).data() || {};
+    const type = fresh.partyRoundType;
+
+    let nextScores = { ...(fresh.scores || {}) };
+    let nextLives  = { ...(fresh.lives  || {}) };
+    let nextTurnMaster = fresh.turnMasterId;
+
+    if (type === 'superlatives') {
+      // Count votes → max
+      const counts = {};
+      (fresh.votes || []).forEach(v => { if (v.targetPlayerId) counts[v.targetPlayerId] = (counts[v.targetPlayerId] || 0) + 1; });
+      const ranked = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+      if (ranked.length > 0) {
+        // break ties randomly among top
+        const topScore = ranked[0][1];
+        const topIds = ranked.filter(([_,c])=>c===topScore).map(([pid])=>pid);
+        const winnerId = topIds[Math.floor(Math.random()*topIds.length)];
+        nextScores[winnerId] = (nextScores[winnerId] || 0) + 1;
+      }
+    }
+
+    if (type === 'fillin') {
+      // Turn Master picks exactly one submission
+      const subms = fresh.submissions || [];
+      const v = (fresh.votes || [])[0];
+      if (v && typeof v.submissionIndex === 'number' && subms[v.submissionIndex]) {
+        const winnerId = subms[v.submissionIndex].playerId;
+        nextScores[winnerId] = (nextScores[winnerId] || 0) + 1;
+        nextTurnMaster = winnerId; // winner becomes next turn master
+      }
+    }
+
+    if (type === 'nhie') {
+      // Everyone taps I Have / I Haven't via votes: we’ll store as {voterId, targetPlayerId:'HAVE'|'HAVENT'}
+      // For simplicity, we used votes as {voterId, submissionIndex: 1 for HAVE, 0 for HAVENT}
+      const vts = fresh.votes || [];
+      vts.forEach(v => {
+        if (v.submissionIndex === 1) { // I HAVE
+          nextLives[v.voterId] = Math.max(0, (nextLives[v.voterId] ?? 10) - 1);
+        }
+      });
+      // Alternative A: if only one player has lives > 0, award +3 and reset lives
+      const alive = Object.entries(nextLives).filter(([_,L]) => L > 0).map(([pid])=>pid);
+      if (alive.length === 1) {
+        const lastId = alive[0];
+        nextScores[lastId] = (nextScores[lastId] || 0) + 3;
+        // Reset for next NHIE cycle
+        const resetLives = { ...nextLives };
+        Object.keys(resetLives).forEach(pid => { resetLives[pid] = 10; });
+        nextLives = resetLives;
+        showNotification('Last standing in NHIE! +3 points awarded.', '🏆');
+      }
+    }
+
+    await updateDoc(sessionRef, {
+      scores: nextScores,
+      lives: nextLives,
+      turnMasterId: nextTurnMaster,
+      partyPhase: 'results'
+    });
+
+    setScores(nextScores); setLives(nextLives); setTurnMasterId(nextTurnMaster);
+    setPartyPhase('results');
+  };
+
+  const continuePartyAfterResults = async () => {
+    await startNextPartyPrompt();
+  };
+
+  /* =========================
+     UI Components
   ========================= */
   const TopBar = () => (
     <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
@@ -865,10 +905,7 @@ export default function Overshare() {
       </span>
 
       <button
-        onClick={() => {
-          setAudioEnabled((v) => !v);
-          try { playSound('click'); } catch {}
-        }}
+        onClick={() => { setAudioEnabled((v) => !v); try { playSound('click'); } catch {} }}
         className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
         aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
         title={audioEnabled ? 'Sound: on' : 'Sound: off'}
@@ -891,9 +928,7 @@ export default function Overshare() {
     return (
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) setShowHelp(false);
-        }}
+        onClick={(e) => { if (e.target === e.currentTarget) setShowHelp(false); }}
       >
         <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-2xl p-6 relative">
           <button
@@ -912,10 +947,9 @@ export default function Overshare() {
           </div>
 
           <div className="space-y-3 text-gray-700 dark:text-gray-200">
-            <p>It’s a conversation game — don’t overthink it.</p>
-            <p>Take turns asking the group the question on your screen, then pass it to the next player.</p>
-            <p>Play it your way: bend rules, make new ones — just have fun.</p>
-            <p className="text-sm text-gray-500 dark:text-gray-300">Pro tip: the more you share, the better the stories get.</p>
+            <p>Pick a mode: Solo for quick vibes, Multiplayer for Classic or Party.</p>
+            <p>Classic = conversation rounds. Party = superlatives, fill-ins, and NHIE with scoring.</p>
+            <p>Be kind, be bold, overshare responsibly.</p>
           </div>
 
           <div className="mt-6 border-t border-gray-200 dark:border-gray-600 pt-4 flex items-center justify-between">
@@ -937,7 +971,7 @@ export default function Overshare() {
   const NotificationToast = () => {
     if (!notification) return null;
     return (
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl shadow-lg p-4 z-50 animate-bounce">
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl shadow-lg p-4 z-50">
         <div className="flex items-center space-x-2">
           <span className="text-2xl">{notification.emoji}</span>
           <span className="font-medium text-gray-800 dark:text-gray-100">{notification.message}</span>
@@ -955,34 +989,32 @@ export default function Overshare() {
     </div>
   );
 
-  const CategoryCard = ({ categoryKey, category, isSelected, isRecommended, onClick, disabled = false }) => {
-    const IconComponent =
-      category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
+  const CategoryPill = ({ categoryKey }) => {
+    const c = CATEGORIES[categoryKey] || {};
+    const Icon = iconMap[c.icon] || MessageCircle;
+    return (
+      <span className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${c.color || 'from-gray-400 to-gray-500'} text-white text-sm`}>
+        <Icon className="w-4 h-4" /><span>{c.name || categoryKey}</span>
+      </span>
+    );
+  };
+
+  const CategoryCard = ({ categoryKey, category, onClick, disabled = false }) => {
+    const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
     return (
       <button
         onClick={onClick}
         disabled={disabled}
         className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
-          isSelected ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/30' : 'border-gray-200 dark:border-gray-600 hover:border-purple-300'
-        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md'}`}
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md'
+        } border-gray-200 dark:border-gray-600 hover:border-purple-300`}
       >
         <div className="flex items-start space-x-3">
-          <div
-            className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${
-              category?.color || 'from-gray-400 to-gray-500'
-            }`}
-          >
+          <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'}`}>
             <IconComponent className="w-4 h-4 text-white" />
           </div>
           <div className="flex-1">
-            <div className="flex items-center space-x-2">
-              <h3 className="font-semibold text-gray-800 dark:text-gray-100">{category?.name || 'Category'}</h3>
-              {isRecommended && (
-                <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200 px-2 py-1 rounded-full">
-                  Recommended
-                </span>
-              )}
-            </div>
+            <h3 className="font-semibold text-gray-800 dark:text-gray-100">{category?.name || 'Category'}</h3>
             <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">{category?.description || ''}</p>
           </div>
         </div>
@@ -990,7 +1022,7 @@ export default function Overshare() {
     );
   };
 
-  const PlayerList = ({ players: list, title, showProgress = false, currentPlayerName = null }) => (
+  const PlayerList = ({ players: list, title, currentPlayerName = null }) => (
     <div className="mb-6">
       <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">
         {title} ({(list || []).length})
@@ -1006,14 +1038,7 @@ export default function Overshare() {
             <span className="font-medium">{player?.name || 'Player'}</span>
             <div className="flex items-center space-x-2">
               {player?.id === hostId && (
-                <span className="text-xs bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-200 px-2 py-1 rounded-full">
-                  Host
-                </span>
-              )}
-              {showProgress && player?.relationshipAnswers && (
-                <span className="text-xs bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-200 px-2 py-1 rounded-full">
-                  ✓
-                </span>
+                <span className="text-xs bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-200 px-2 py-1 rounded-full">Host</span>
               )}
             </div>
           </div>
@@ -1028,15 +1053,39 @@ export default function Overshare() {
     </div>
   );
 
+  const MiniLeaderboard = ({ scores, players }) => {
+    const entries = Object.entries(scores || {});
+    const withNames = entries.map(([pid, sc]) => ({ pid, name: (players.find(p=>p.id===pid)?.name)||'—', sc }));
+    withNames.sort((a,b)=>b.sc-a.sc);
+    const top3 = withNames.slice(0,3);
+    return (
+      <div className="fixed top-4 left-4 z-40">
+        <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur rounded-xl border border-gray-200 dark:border-gray-700 px-3 py-2 shadow">
+          <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+            <Crown className="w-4 h-4" /> Leaderboard
+          </div>
+          <div className="mt-2 space-y-1 text-sm">
+            {top3.map((e,i)=>(
+              <div key={e.pid} className="flex items-center justify-between">
+                <span className="truncate max-w-[140px]">{i+1}. {e.name}</span>
+                <span className="ml-3 font-semibold">{e.sc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* =========================
-     Screens: Welcome
+     SCREENS
   ========================= */
+
+  // Welcome
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+        <TopBar /><HelpModal /><NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
@@ -1045,97 +1094,80 @@ export default function Overshare() {
             <h1 className="text-3xl font-bold mb-2">Overshare</h1>
             <p className="text-gray-600 dark:text-gray-300">Personalized conversation games that bring people closer together</p>
           </div>
-
           <div className="mb-6">
             <input
               type="text"
               placeholder="Enter your name"
               value={playerName}
               onChange={(e) => setPlayerName(e.target.value)}
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
+              autoComplete="off" autoCorrect="off" spellCheck={false}
               className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
             />
           </div>
-
           <button
-            onClick={() => {
-              if (!playerName.trim()) return;
-              try { playSound('click'); } catch {}
-              setGameState('survey');
-            }}
+            onClick={() => { if (!playerName.trim()) return; try { playSound('click'); } catch {} setGameState('modeMenu'); }}
             disabled={!playerName.trim()}
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Let's Get Started
+            Continue
           </button>
         </div>
       </div>
     );
   }
 
-  /* =========================
-     Screens: Survey
-  ========================= */
-  if (gameState === 'survey') {
-    const currentQuestionIndex = Object.keys(surveyAnswers).length;
-    const currentSurveyQuestion = initialSurveyQuestions[currentQuestionIndex];
-
-    if (currentQuestionIndex >= initialSurveyQuestions.length) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <TopBar />
-          <HelpModal />
-          <NotificationToast />
-          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-            <div className="mb-6">
-              <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold mb-2">Perfect, {playerName}!</h2>
-              <p className="text-gray-600 dark:text-gray-300">We'll use this to create personalized questions for your group.</p>
-            </div>
+  // Mode Menu (Solo vs Multiplayer)
+  if (gameState === 'modeMenu') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
+          <h2 className="text-2xl font-bold mb-2">How do you want to play today?</h2>
+          <p className="text-gray-600 dark:text-gray-300 mb-6">Pick Solo for one device, or Multiplayer to play together.</p>
+          <div className="grid grid-cols-1 gap-4">
             <button
-              onClick={() => {
-                try { playSound('success'); } catch {}
-                handleSurveySubmit();
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+              onClick={() => { setMode('solo'); setGameState('soloCategories'); try { playSound('click'); } catch {} }}
+              className="w-full py-4 px-6 rounded-xl border-2 border-purple-500 bg-white dark:bg-gray-900 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/10 transition flex items-center justify-center gap-2 font-semibold"
             >
-              Continue
+              <Wand2 className="w-5 h-5" /> Solo (Single Device)
+            </button>
+            <button
+              onClick={() => { setMode(null); setGameState('createOrJoin'); try { playSound('click'); } catch {} }}
+              className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:shadow-lg transition flex items-center justify-center gap-2 font-semibold"
+            >
+              <Users className="w-5 h-5" /> Multiplayer
             </button>
           </div>
         </div>
-      );
-    }
+      </div>
+    );
+  }
 
+  // SOLO — Category picker
+  if (gameState === 'soloCategories' && mode === 'solo') {
+    const entries = Object.entries(CATEGORIES || {});
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500 dark:text-gray-300">
-                Question {currentQuestionIndex + 1} of {initialSurveyQuestions.length}
-              </span>
-              <ProgressIndicator current={currentQuestionIndex + 1} total={initialSurveyQuestions.length} className="w-16" />
-            </div>
-            <h2 className="text-xl font-semibold mb-6">{currentSurveyQuestion.question}</h2>
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold">Solo Mode</h2>
+            <p className="text-gray-600 dark:text-gray-300">Pick a category and get a question. Don’t like it? Skip.</p>
           </div>
-
           <div className="space-y-3">
-            {currentSurveyQuestion.options.map((option, index) => (
-              <button
-                key={`${currentSurveyQuestion.id}-${index}`}
+            {entries.map(([key, category]) => (
+              <CategoryCard
+                key={key}
+                categoryKey={key}
+                category={category}
                 onClick={() => {
-                  try { playSound('click'); } catch {}
-                  setSurveyAnswers((prev) => ({ ...prev, [currentSurveyQuestion.id]: option }));
+                  setSoloCategory(key);
+                  const q = getQuestion(key, soloHistory);
+                  setSoloQuestion(q); setSoloHistory(h => [...h, q]);
+                  setGameState('soloPlaying');
                 }}
-                className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all"
-              >
-                {option}
-              </button>
+              />
             ))}
           </div>
         </div>
@@ -1143,24 +1175,60 @@ export default function Overshare() {
     );
   }
 
-  /* =========================
-     Screens: Create or Join
-  ========================= */
+  // SOLO — Playing
+  if (gameState === 'soloPlaying' && mode === 'solo') {
+    const c = CATEGORIES[soloCategory] || {};
+    const Icon = iconMap[c.icon] || MessageCircle;
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4"><Icon className="w-6 h-6 text-white"/></div>
+            <div className="mb-4"><span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${c.color || 'from-gray-400 to-gray-500'} text-white text-sm`}><Icon className="w-3 h-3"/><span>{c.name || soloCategory}</span></span></div>
+            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400">
+              <p className="text-lg leading-relaxed">{soloQuestion}</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <button
+              onClick={() => {
+                const q = getQuestion(soloCategory, soloHistory);
+                setSoloQuestion(q); setSoloHistory(h => [...h, q]);
+                try { playSound('click'); } catch {}
+              }}
+              className="w-full py-3 px-6 rounded-xl font-semibold text-lg bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/10 transition"
+            >
+              Skip
+            </button>
+            <button
+              onClick={() => { setGameState('soloCategories'); try { playSound('turnTransition'); } catch {} }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Choose Another Category
+            </button>
+            <button
+              onClick={() => setGameState('modeMenu')}
+              className="w-full bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-all"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Create or Join (Multiplayer)
   if (gameState === 'createOrJoin') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+        <TopBar /><HelpModal /><NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <h2 className="text-2xl font-bold mb-6">Ready to play, {playerName}!</h2>
-
           <div className="space-y-4">
             <button
-              onClick={() => {
-                try { playSound('click'); } catch {}
-                handleCreateSession();
-              }}
+              onClick={() => { try { playSound('click'); } catch {} handleCreateSession(); }}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
             >
               <Users className="w-5 h-5 mr-2" />
@@ -1175,20 +1243,11 @@ export default function Overshare() {
 
             <div className="space-y-3">
               <input
-                type="text"
-                inputMode="text"
-                autoComplete="off"
-                autoCorrect="off"
-                spellCheck={false}
+                type="text" inputMode="text" autoComplete="off" autoCorrect="off" spellCheck={false}
                 placeholder="Enter session code"
                 value={sessionCode}
                 onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && sessionCode.trim()) {
-                    try { playSound('click'); } catch {}
-                    handleJoinSession();
-                  }
-                }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && sessionCode.trim()) { try { playSound('click'); } catch {} handleJoinSession(); } }}
                 className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
               />
               <button
@@ -1205,19 +1264,15 @@ export default function Overshare() {
     );
   }
 
-  /* =========================
-     Screens: Waiting Room
-  ========================= */
+  // Waiting Room — host chooses Classic or Party (Party disabled <3 players)
   if (gameState === 'waitingRoom') {
     const alreadyIn = players.some((p) => p?.id === myUid);
-    const isNewPlayer = !alreadyIn;
     const amHost = myUid && hostId && myUid === hostId;
+    const canParty = (players || []).length >= 3;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
+        <TopBar /><HelpModal /><NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
           <div className="mb-6">
             <h2 className="text-2xl font-bold mb-2">Session {sessionCode}</h2>
@@ -1226,54 +1281,16 @@ export default function Overshare() {
 
           <PlayerList players={players} title="Players" />
 
-          {selectedCategories.length > 0 && (
-            <div className="mb-6">
-              <h3 className="text-lg font-semibold mb-3">Question Categories</h3>
-              <div className="flex flex-wrap gap-2">
-                {selectedCategories.map((categoryKey) => {
-                  const category = CATEGORIES[categoryKey];
-                  const IconComponent =
-                    category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-                  return (
-                    <div
-                      key={categoryKey}
-                      className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${
-                        category?.color || 'from-gray-400 to-gray-500'
-                      } text-white text-sm`}
-                    >
-                      <IconComponent className="w-4 h-4" />
-                      <span>{category?.name || categoryKey}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Only non-members see "Join Game" */}
-          {!amHost && isNewPlayer && (
+          {!amHost && !alreadyIn && (
             <button
               onClick={async () => {
                 try { playSound('click'); } catch {}
                 const sessionRef = doc(db, 'sessions', sessionCode);
-                const newPlayer = {
-                  id: myUid || getOrMakeDeviceId(),
-                  name: playerName,
-                  isHost: false,
-                  surveyAnswers,
-                  joinedAt: new Date().toISOString()
-                };
+                const newPlayer = { id: myUid, name: playerName, isHost: false, surveyAnswers: {}, joinedAt: new Date().toISOString() };
                 const snap = await getDoc(sessionRef);
                 if (snap.exists()) {
-                  try {
-                    await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
-                  } catch {
-                    const data = snap.data() || {};
-                    const updatedPlayers = [...(data.players || []), newPlayer]
-                      .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i);
-                    await updateDoc(sessionRef, { players: updatedPlayers });
-                    setPlayers(updatedPlayers);
-                  }
+                  try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
+                  catch { const data = snap.data() || {}; const updatedPlayers = [...(data.players || []), newPlayer].filter((p,i,a)=>a.findIndex(x=>x.id===p.id)===i); await updateDoc(sessionRef, { players: updatedPlayers }); setPlayers(updatedPlayers); }
                   try { playSound('success'); } catch {}
                 }
               }}
@@ -1283,267 +1300,44 @@ export default function Overshare() {
             </button>
           )}
 
-          {/* Host sees Start button */}
-          {amHost && !isNewPlayer && (
-            <button
-              onClick={async () => {
-                if (!sessionCode) return;
-                try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'categoryVoting' });
-                setGameState('categoryVoting');
-              }}
-              disabled={players.length < 2}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Start Game
-            </button>
-          )}
+          {amHost && alreadyIn && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-3 text-left">
+                <button
+                  onClick={async () => {
+                    try { playSound('click'); } catch {}
+                    const sessionRef = doc(db, 'sessions', sessionCode);
+                    await updateDoc(sessionRef, { mode: 'classic', gameState: 'classicInitial' });
+                    setMode('classic'); setGameState('classicInitial');
+                  }}
+                  className="w-full py-4 px-6 rounded-xl border-2 border-purple-500 bg-white dark:bg-gray-900 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/10 transition flex items-center justify-center gap-2 font-semibold"
+                >
+                  <MessageCircle className="w-5 h-5" /> Start Classic
+                </button>
 
-          {!amHost && !isNewPlayer && (
-            <p className="text-gray-500 dark:text-gray-300">Waiting for host to continue...</p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  /* =========================
-     Screens: Category Voting
-  ========================= */
-  if (gameState === 'categoryVoting') {
-    const recommended = recommendCategories(players, relationshipAnswers);
-    const allVotes = Object.values(categoryVotes || {});
-    const totalVotes = allVotes.length;
-    const waitingFor = (players || [])
-      .filter((p) => !(categoryVotes || {})[p?.name])
-      .map((p) => p?.name);
-    const allPlayersVoted = (players || []).every(
-      (p) => (categoryVotes || {})[p?.name] && (categoryVotes || {})[p?.name].length > 0
-    );
-
-    const entries = Object.entries(CATEGORIES || {});
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6 text-center">
-            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold mb-2">
-              {hasVotedCategories ? 'Waiting for Others' : 'Vote for Categories'}
-            </h2>
-            <p className="text-gray-600 dark:text-gray-300">
-              {hasVotedCategories
-                ? `${totalVotes} of ${players.length} players have voted`
-                : "Select 2-3 categories you'd like to play with"}
-            </p>
-            {hasVotedCategories && (
-              <p className="text-sm text-gray-500 dark:text-gray-300 mt-2">Session Code: {sessionCode}</p>
-            )}
-          </div>
-
-          {!hasVotedCategories ? (
-            <>
-              <div className="space-y-3 mb-6">
-                {entries.map(([key, category]) => {
-                  const isRecommended = (recommended || []).includes(key);
-                  const isSelected = (selectedCategories || []).includes(key);
-                  const disabled = !isSelected && (selectedCategories || []).length >= 3;
-                  return (
-                    <CategoryCard
-                      key={key}
-                      categoryKey={key}
-                      category={category}
-                      isSelected={isSelected}
-                      isRecommended={isRecommended}
-                      disabled={disabled}
-                      onClick={() => {
-                        try { playSound('click'); } catch {}
-                        setSelectedCategories((prev) => {
-                          const has = prev.includes(key);
-                          if (has) return prev.filter((c) => c !== key);
-                          if (prev.length >= 3) return prev;
-                          return [...prev, key];
-                        });
-                      }}
-                    />
-                  );
-                })}
+                <button
+                  onClick={async () => {
+                    if (!canParty) return;
+                    try { playSound('click'); } catch {}
+                    const sessionRef = doc(db, 'sessions', sessionCode);
+                    // initialize scores/lives/turnMaster and jump into party
+                    await updateDoc(sessionRef, { mode: 'party', gameState: 'party', partyPhase: null, partyRoundType: null });
+                    setMode('party'); setGameState('party');
+                    await initPartyIfNeeded();
+                    await startNextPartyPrompt();
+                  }}
+                  disabled={!canParty}
+                  className={`w-full py-4 px-6 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 text-white hover:shadow-lg transition flex items-center justify-center gap-2 font-semibold ${!canParty ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  title={canParty ? 'Mix mini-games with scoring' : 'Need 3+ players'}
+                >
+                  <Swords className="w-5 h-5" /> Start Party Mode
+                </button>
               </div>
-
-              <button
-                onClick={() => handleCategoryVote(selectedCategories)}
-                disabled={(selectedCategories || []).length === 0}
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Submit My Votes ({(selectedCategories || []).length}/3)
-              </button>
-            </>
-          ) : (
-            <div>
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-3">Your Votes:</h3>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {(myVotedCategories || []).map((categoryKey) => {
-                    const category = CATEGORIES[categoryKey];
-                    const IconComponent =
-                      category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-                    return (
-                      <div
-                        key={categoryKey}
-                        className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${
-                          category?.color || 'from-gray-400 to-gray-500'
-                        } text-white text-sm`}
-                      >
-                        <IconComponent className="w-4 h-4" />
-                        <span>{category?.name || categoryKey}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {allPlayersVoted && isHost ? (
-                <div className="space-y-3">
-                  <p className="text-center text-gray-600 dark:text-gray-300 mb-4">All players have voted!</p>
-                  <button
-                    onClick={async () => {
-                      if (!sessionCode) return;
-                      try { playSound('click'); } catch {}
-                      await updateDoc(doc(db, 'sessions', sessionCode), {
-                        gameState: 'waitingForHost'
-                      });
-                      setGameState('waitingForHost');
-                    }}
-                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-                  >
-                    View Results & Start Game
-                  </button>
-                </div>
-              ) : waitingFor.length > 0 ? (
-                <div className="text-center">
-                  <LoadingSpinner size="w-16 h-16" />
-                  <p className="text-gray-600 dark:text-gray-300 mb-2 mt-4">Waiting for:</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-300">{waitingFor.join(', ')}</p>
-
-                  {isHost && (
-                    <button
-                      onClick={async () => {
-                        if (!sessionCode) return;
-                        try { playSound('click'); } catch {}
-                        await updateDoc(doc(db, 'sessions', sessionCode), {
-                          gameState: 'waitingForHost'
-                        });
-                        setGameState('waitingForHost');
-                      }}
-                      className="mt-4 text-sm text-purple-700 dark:text-purple-300 hover:underline"
-                    >
-                      Continue without waiting
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center">
-                  <p className="text-gray-600 dark:text-gray-300">All players have voted!</p>
-                  {!isHost && (
-                    <p className="text-sm text-gray-500 dark:text-gray-300 mt-2">Waiting for host to start the game...</p>
-                  )}
-                </div>
-              )}
             </div>
           )}
-        </div>
-      </div>
-    );
-  }
 
-  /* =========================
-     Screens: Waiting For Host
-  ========================= */
-  if (gameState === 'waitingForHost') {
-    const voteResults = {};
-    Object.values(categoryVotes || {}).forEach((votes) => {
-      (votes || []).forEach((cat) => {
-        voteResults[cat] = (voteResults[cat] || 0) + 1;
-      });
-    });
-    const topCategories = calculateTopCategories(categoryVotes || {});
-
-    const recommendedFallback = recommendCategories(players, relationshipAnswers);
-    const safeTop =
-      (topCategories && topCategories.length > 0)
-        ? topCategories
-        : (recommendedFallback && recommendedFallback.length > 0)
-          ? recommendedFallback
-          : Object.keys(CATEGORIES);
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold mb-2">All Votes Are In!</h2>
-            <p className="text-gray-600 dark:text-gray-300">Top categories based on everyone's votes:</p>
-          </div>
-
-          <div className="mb-6">
-            <div className="space-y-2">
-              {Object.entries(voteResults)
-                .sort((a, b) => b[1] - a[1])
-                .map(([categoryKey, voteCount]) => {
-                  const category = CATEGORIES[categoryKey];
-                  const IconComponent =
-                    category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-                  const isSelected = (safeTop || []).includes(categoryKey);
-                  return (
-                    <div
-                      key={categoryKey}
-                      className={`flex items-center justify-between p-3 rounded-xl border ${isSelected
-                        ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-300 dark:border-purple-500/50'
-                        : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-600'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <div
-                          className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${
-                            category?.color || 'from-gray-400 to-gray-500'
-                          }`}
-                        >
-                          <IconComponent className="w-4 h-4 text-white" />
-                        </div>
-                        <span className="font-medium">{category?.name || categoryKey}</span>
-                      </div>
-                      <span className="text-sm text-gray-600 dark:text-gray-300">{voteCount} votes</span>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-
-          {isHost ? (
-            <button
-              onClick={async () => {
-                if (!sessionCode) return;
-                try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  gameState: 'relationshipSurvey',
-                  selectedCategories: safeTop,
-                  availableCategories: safeTop
-                });
-                setGameState('relationshipSurvey');
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-            >
-              Let's See How You Know Each Other
-            </button>
-          ) : (
-            <p className="text-gray-500 dark:text-gray-300">
-              Waiting for {players.find((p) => p?.id === hostId)?.name || 'host'} to continue...
-            </p>
+          {!amHost && alreadyIn && (
+            <p className="text-gray-500 dark:text-gray-300">Waiting for host to choose a mode…</p>
           )}
         </div>
       </div>
@@ -1551,31 +1345,23 @@ export default function Overshare() {
   }
 
   /* =========================
-     Screens: Relationship Survey
+     Classic — Initial Questions
   ========================= */
-  if (gameState === 'relationshipSurvey') {
-    const currentPlayerIndex = Object.keys(relationshipAnswers || {}).length;
-    const otherPlayers = (players || []).filter((p) => p?.id !== myUid);
-    const currentPlayer = otherPlayers[currentPlayerIndex];
+  if (gameState === 'classicInitial' && mode === 'classic') {
+    const currentIndex = Object.keys(surveyAnswers).length;
+    const q = initialQuestions[currentIndex];
 
-    if (currentPlayerIndex >= otherPlayers.length) {
+    if (currentIndex >= initialQuestions.length) {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          <TopBar />
-          <HelpModal />
-          <NotificationToast />
-          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-            <div className="mb-6">
-              <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold mb-2">Great!</h2>
-              <p className="text-gray-600 dark:text-gray-300">Now let's choose what types of questions you want to explore.</p>
-            </div>
+          <TopBar /><HelpModal /><NotificationToast />
+          <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold mb-2">Nice, {playerName}!</h2>
+            <p className="text-gray-600 dark:text-gray-300">Next, a quick “how you know each other”.</p>
             <button
-              onClick={() => {
-                try { playSound('success'); } catch {}
-                handleRelationshipSurveySubmit();
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+              onClick={handleInitialQsSubmit}
+              className="mt-6 w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
             >
               Continue
             </button>
@@ -1586,35 +1372,26 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-500 dark:text-gray-300">
-                Player {currentPlayerIndex + 1} of {otherPlayers.length}
-              </span>
-              <ProgressIndicator current={currentPlayerIndex + 1} total={otherPlayers.length} className="w-16" />
+              <span className="text-sm text-gray-500 dark:text-gray-300">Question {currentIndex + 1} of {initialQuestions.length}</span>
+              <ProgressIndicator current={currentIndex + 1} total={initialQuestions.length} className="w-16" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">
-              How are you connected to {currentPlayer?.name}?
-            </h2>
-            <p className="text-gray-600 dark:text-gray-300 text-sm">This helps us create better questions for your group.</p>
+            <h2 className="text-xl font-semibold mb-6">{q.question}</h2>
           </div>
-
           <div className="space-y-3">
-            {relationshipOptions.map((option, index) => (
+            {q.options.map((opt, i) => (
               <button
-                key={`rel-${index}`}
+                key={`init-${q.id}-${i}`}
                 onClick={() => {
                   try { playSound('click'); } catch {}
-                  if (!currentPlayer?.name) return;
-                  setRelationshipAnswers((prev) => ({ ...prev, [currentPlayer.name]: option }));
+                  setSurveyAnswers(prev => ({ ...prev, [q.id]: opt }));
                 }}
                 className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all"
               >
-                {option}
+                {opt}
               </button>
             ))}
           </div>
@@ -1624,37 +1401,133 @@ export default function Overshare() {
   }
 
   /* =========================
-     Screens: Waiting For Others
+     Classic — Relationship Survey (unchanged)
   ========================= */
-  if (gameState === 'waitingForOthers') {
-    const playersWithRelationships = (players || []).filter((p) => p?.relationshipAnswers);
-    const waitingFor = (players || [])
-      .filter((p) => !p?.relationshipAnswers)
-      .map((p) => p?.name);
+  if (gameState === 'relationshipSurvey' && mode === 'classic') {
+    const otherPlayers = (players || []).filter((p) => p?.id !== myUid);
+    const idx = Object.keys(relationshipAnswers || {}).length;
+    const currentPlayer = otherPlayers[idx];
+
+    if (idx >= otherPlayers.length) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+          <TopBar /><HelpModal /><NotificationToast />
+          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold mb-2">Great!</h2>
+            <p className="text-gray-600 dark:text-gray-300">Now pick the categories you want.</p>
+            <button
+              onClick={handleRelationshipSurveySubmit}
+              className="mt-6 w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const relationshipOptions = [
+      'Romantic partner/spouse',
+      'Close friend (know each other well)',
+      'Friend (hang out regularly)',
+      'Family member',
+      'Coworker/colleague',
+      "Acquaintance (don't know well)",
+      'Just met/new friend'
+    ];
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6">
-            <Heart className="w-12 h-12 text-pink-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold mb-2">Thanks!</h2>
-            <p className="text-gray-600 dark:text-gray-300">Waiting for others to complete their surveys...</p>
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm text-gray-500 dark:text-gray-300">
+                Player {idx + 1} of {otherPlayers.length}
+              </span>
+              <ProgressIndicator current={idx + 1} total={otherPlayers.length} className="w-16" />
+            </div>
+            <h2 className="text-xl font-semibold mb-2">How are you connected to {currentPlayer?.name}?</h2>
+            <p className="text-gray-600 dark:text-gray-300 text-sm">This helps us create better questions for your group.</p>
           </div>
+          <div className="space-y-3">
+            {relationshipOptions.map((opt, i) => (
+              <button
+                key={`rel-${i}`}
+                onClick={() => { try { playSound('click'); } catch {}; if (!currentPlayer?.name) return; setRelationshipAnswers(prev => ({ ...prev, [currentPlayer.name]: opt })); }}
+                className="w-full p-4 text-left border-2 border-gray-200 dark:border-gray-600 rounded-xl hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-all"
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-          <div className="mb-4">
-            <p className="text-lg">
-              {playersWithRelationships.length} of {players.length} completed
+  /* =========================
+     Category Voting (Classic)
+  ========================= */
+  if (gameState === 'categoryVoting' && mode === 'classic') {
+    const entries = Object.entries(CATEGORIES || {});
+    const allVotes = Object.values(categoryVotes || {});
+    const totalVotes = allVotes.length;
+    const waitingFor = (players || []).filter((p) => !(categoryVotes || {})[p?.name]).map((p) => p?.name);
+    const allPlayersVoted = (players || []).every((p) => (categoryVotes || {})[p?.name] && (categoryVotes || {})[p?.name].length > 0);
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          <div className="mb-6 text-center">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold mb-2">{hasVotedCategories ? 'Waiting for Others' : 'Vote for Categories'}</h2>
+            <p className="text-gray-600 dark:text-gray-300">
+              {hasVotedCategories ? `${totalVotes} of ${players.length} players have voted` : "Select 2-3 categories you'd like to play with"}
             </p>
+            {hasVotedCategories && (<p className="text-sm text-gray-500 dark:text-gray-300 mt-2">Session Code: {sessionCode}</p>)}
           </div>
 
-          {waitingFor.length > 0 && (
+          {!hasVotedCategories ? (
+            <>
+              <div className="space-y-3 mb-6">
+                {entries.map(([key, category]) => (
+                  <CategoryCard
+                    key={key}
+                    categoryKey={key}
+                    category={category}
+                    onClick={() => {
+                      try { playSound('click'); } catch {}
+                      setSelectedCategories((prev) => {
+                        const has = prev.includes(key); if (has) return prev.filter((c) => c !== key);
+                        if (prev.length >= 3) return prev; return [...prev, key];
+                      });
+                    }}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={() => handleCategoryVote(selectedCategories)}
+                disabled={(selectedCategories || []).length === 0}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit My Votes ({(selectedCategories || []).length}/3)
+              </button>
+            </>
+          ) : (
             <div className="text-center">
-              <LoadingSpinner size="w-16 h-16" />
-              <p className="text-gray-600 dark:text-gray-300 mb-2 mt-4">Still waiting for:</p>
-              <p className="text-sm text-gray-500 dark:text-gray-300">{waitingFor.join(', ')}</p>
+              {allPlayersVoted
+                ? <p className="text-gray-600 dark:text-gray-300">All players have voted! Waiting for host…</p>
+                : (
+                  <>
+                    <LoadingSpinner size="w-16 h-16" />
+                    <p className="text-gray-600 dark:text-gray-300 mb-2 mt-4">Waiting for:</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-300">{waitingFor.join(', ')}</p>
+                  </>
+                )
+              }
             </div>
           )}
         </div>
@@ -1662,86 +1535,88 @@ export default function Overshare() {
     );
   }
 
-  /* =========================
-     Screens: Category Picking
-  ========================= */
-  if (gameState === 'categoryPicking') {
-    const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.id === myUid;
+  // Waiting for Host — Classic → relationshipSurvey or categoryPicking
+  if (gameState === 'waitingForHost' && mode === 'classic') {
+    const voteResults = {};
+    Object.values(categoryVotes || {}).forEach((votes) => { (votes || []).forEach((cat) => { voteResults[cat] = (voteResults[cat] || 0) + 1; }); });
+    const topCategories = calculateTopCategories(categoryVotes || {});
+    const safeTop = topCategories.length ? topCategories : Object.keys(CATEGORIES);
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold mb-2">All Votes Are In!</h2>
+            <p className="text-gray-600 dark:text-gray-300">Top categories based on everyone's votes:</p>
+          </div>
+          <div className="mb-6">
+            <div className="space-y-2">
+              {Object.entries(voteResults).sort((a,b)=>b[1]-a[1]).map(([categoryKey, count]) => (
+                <div key={categoryKey} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600">
+                  <div className="flex items-center space-x-3">
+                    <CategoryPill categoryKey={categoryKey} />
+                  </div>
+                  <span className="text-sm text-gray-600 dark:text-gray-300">{count} votes</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {isHost ? (
+            <button
+              onClick={async () => {
+                if (!sessionCode) return;
+                try { playSound('click'); } catch {}
+                await updateDoc(doc(db, 'sessions', sessionCode), {
+                  gameState: 'categoryPicking',
+                  selectedCategories: safeTop,
+                  availableCategories: safeTop
+                });
+                setGameState('categoryPicking');
+              }}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
+            >
+              Start Round 1
+            </button>
+          ) : <p className="text-gray-500 dark:text-gray-300">Waiting for host…</p>}
+        </div>
+      </div>
+    );
+  }
+
+  // Category Picking (Classic)
+  if (gameState === 'categoryPicking' && mode === 'classic') {
+    const currentPlayer = players[currentTurnIndex] || players[0];
+    const isMyTurn = currentPlayer?.id === myUid;
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
             <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            {isMyTurn ? (
-              <>
-                <h2 className="text-2xl font-bold mb-2">Your Turn!</h2>
-                <p className="text-gray-600 dark:text-gray-300">Choose a category for the next question</p>
-              </>
-            ) : (
-              <>
-                <h2 className="text-2xl font-bold mb-2">{currentPlayer?.name}'s Turn</h2>
-                <p className="text-gray-600 dark:text-gray-300">{currentPlayer?.name} is choosing a category...</p>
-              </>
-            )}
+            <h2 className="text-2xl font-bold mb-2">{isMyTurn ? 'Your Turn!' : `${currentPlayer?.name}'s Turn`}</h2>
+            <p className="text-gray-600 dark:text-gray-300">{isMyTurn ? 'Choose a category' : `${currentPlayer?.name} is choosing…`}</p>
             <p className="text-sm text-gray-500 dark:text-gray-300 mt-2">
               Round {players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1}
             </p>
           </div>
-
           {isMyTurn ? (
             <div className="space-y-3">
-              {(availableCategories || []).length > 0 ? (
-                (availableCategories || []).map((categoryKey) => {
-                  const category = CATEGORIES[categoryKey];
-                  return (
-                    <CategoryCard
-                      key={categoryKey}
-                      categoryKey={categoryKey}
-                      category={category}
-                      isSelected={false}
-                      isRecommended={false}
-                      onClick={() => {
-                        try { playSound('click'); } catch {}
-                        handleCategoryPicked(categoryKey);
-                      }}
-                    />
-                  );
-                })
-              ) : (
-                <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-xl">
-                  <p className="text-gray-600 dark:text-gray-300">
-                    All categories have been used! Categories will reset for the next round.
-                  </p>
-                </div>
-              )}
+              {(availableCategories || []).map((k) => (
+                <CategoryCard key={k} categoryKey={k} category={CATEGORIES[k]} onClick={() => { try { playSound('click'); } catch {} handleCategoryPicked(k); }} />
+              ))}
             </div>
           ) : (
             <div className="text-center">
               <LoadingSpinner size="w-16 h-16" />
-              <p className="text-gray-500 dark:text-gray-300 mt-4">Waiting for {currentPlayer?.name} to choose...</p>
+              <p className="text-gray-500 dark:text-gray-300 mt-4">Waiting for {currentPlayer?.name}…</p>
             </div>
           )}
-
           {(usedCategories || []).length > 0 && (
             <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-600">
               <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-2">Already Used:</h3>
               <div className="flex flex-wrap gap-2">
-                {(usedCategories || []).map((categoryKey) => {
-                  const category = CATEGORIES[categoryKey];
-                  return (
-                    <span
-                      key={categoryKey}
-                      className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full"
-                    >
-                      {category?.name || categoryKey}
-                    </span>
-                  );
-                })}
+                {(usedCategories || []).map((k) => <CategoryPill key={k} categoryKey={k} />)}
               </div>
             </div>
           )}
@@ -1750,50 +1625,31 @@ export default function Overshare() {
     );
   }
 
-  /* =========================
-     Screens: Playing
-  ========================= */
-  if (gameState === 'playing') {
-    const currentCategoryData = CATEGORIES[currentCategory] || null;
-    const IconComponent =
-      currentCategoryData && iconMap[currentCategoryData.icon]
-        ? iconMap[currentCategoryData.icon]
-        : MessageCircle;
+  // Playing (Classic)
+  if (gameState === 'playing' && mode === 'classic') {
+    const c = CATEGORIES[currentCategory] || {};
+    const Icon = iconMap[c.icon] || MessageCircle;
     const currentPlayer = players[currentTurnIndex] || players[0];
     const isMyTurn = currentPlayer?.id === myUid;
     const canSkip = skipsUsedThisTurn < maxSkipsPerTurn;
-
     const round = players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1;
     const turn = players.length ? ((turnHistory.length || 0) % players.length) + 1 : 1;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+        <TopBar /><HelpModal /><NotificationToast />
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="mb-6 text-center">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4">
-              <IconComponent className="w-6 h-6 text-white" />
-            </div>
-
-            {currentCategoryData && (
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4"><Icon className="w-6 h-6 text-white" /></div>
+            {currentCategory && (
               <div className="mb-4">
-                <span
-                  className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}
-                >
-                  <IconComponent className="w-3 h-3" />
-                  <span>{currentCategoryData.name}</span>
+                <span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${c.color || 'from-gray-400 to-gray-500'} text-white text-sm`}>
+                  <Icon className="w-3 h-3" /><span>{c.name || currentCategory}</span>
                 </span>
               </div>
             )}
-
-            <h2 className="text-lg font-semibold mb-2">
-              {currentPlayer?.name || 'Player'}'s Question
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">
-              Round {round} • Turn {turn} of {players.length || 1}
-            </p>
+            <h2 className="text-lg font-semibold mb-2">{currentPlayer?.name || 'Player'}'s Question</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">Round {round} • Turn {turn} of {players.length || 1}</p>
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400">
               <p className="text-lg leading-relaxed">{currentQuestion}</p>
             </div>
@@ -1805,19 +1661,12 @@ export default function Overshare() {
                 <button
                   onClick={handleSkipQuestion}
                   disabled={!canSkip}
-                  className={`w-full py-3 px-6 rounded-xl font-semibold text-lg transition-all flex items-center justify-center ${
-                    canSkip
-                      ? 'bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/10'
-                      : 'bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 text-gray-400 cursor-not-allowed'
-                  }`}
+                  className={`w-full py-3 px-6 rounded-xl font-semibold text-lg transition-all flex items-center justify-center ${canSkip ? 'bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/10' : 'bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 text-gray-400 cursor-not-allowed'}`}
                 >
                   <SkipForward className="w-5 h-5 mr-2" />
                   {canSkip ? 'Skip This Question' : 'Skip Used'}
-                  <span className="ml-2 text-sm">
-                    ({skipsUsedThisTurn}/{maxSkipsPerTurn})
-                  </span>
+                  <span className="ml-2 text-sm">({skipsUsedThisTurn}/{maxSkipsPerTurn})</span>
                 </button>
-
                 <button
                   onClick={handleNextQuestion}
                   className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
@@ -1826,19 +1675,11 @@ export default function Overshare() {
                 </button>
               </>
             ) : (
-              <div className="text-center">
-                <LoadingSpinner />
-                <p className="text-gray-600 dark:text-gray-300 mt-4">
-                  Waiting for {currentPlayer?.name || 'player'} to finish their turn...
-                </p>
-              </div>
+              <div className="text-center"><LoadingSpinner /><p className="text-gray-600 dark:text-gray-300 mt-4">Waiting for {currentPlayer?.name || 'player'}…</p></div>
             )}
 
             <button
-              onClick={() => {
-                try { playSound('click'); } catch {}
-                setGameState('waitingRoom');
-              }}
+              onClick={() => { try { playSound('click'); } catch {} setGameState('waitingRoom'); }}
               className="w-full bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-all"
             >
               Back to Lobby
@@ -1850,7 +1691,274 @@ export default function Overshare() {
   }
 
   /* =========================
+     PARTY MODE
+  ========================= */
+  if (gameState === 'party' && mode === 'party') {
+    const amHost = myUid && hostId && myUid === hostId;
+    const me = players.find(p=>p.id===myUid);
+
+    // helpers for rendering
+    const playerNameById = (pid) => (players.find(p=>p.id===pid)?.name) || '—';
+    const submissionsAnon = submissions.map((s, i) => ({ label: String.fromCharCode(65 + i), text: s.text, pid: s.playerId }));
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 p-4 flex items-center justify-center">
+        <TopBar /><HelpModal /><NotificationToast />
+        <MiniLeaderboard scores={scores} players={players} />
+
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          {/* Header */}
+          <div className="mb-4 text-center">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 dark:bg-gray-700/50 border border-white/30 dark:border-gray-600 text-sm text-white">
+              <Swords className="w-4 h-4" /> Party Mode
+            </div>
+            <h2 className="text-2xl font-bold mt-3 text-gray-900 dark:text-gray-100">
+              {partyRoundType === 'superlatives' && 'Superlatives'}
+              {partyRoundType === 'fillin' && 'Fill-in the Blank'}
+              {partyRoundType === 'nhie' && 'Never Have I Ever'}
+            </h2>
+            {turnMasterId && (
+              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
+                Turn Master: <span className="font-semibold">{playerNameById(turnMasterId)}</span>
+              </p>
+            )}
+          </div>
+
+          {/* PROMPT */}
+          {partyPhase === 'prompt' && (
+            <div className="space-y-6">
+              <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400">
+                <p className="text-lg leading-relaxed">{currentPromptId}</p>
+              </div>
+
+              {partyRoundType === 'superlatives' && (
+                <div className="text-sm text-gray-600 dark:text-gray-300">
+                  Everyone: tap who fits this best on the next screen.
+                </div>
+              )}
+
+              {partyRoundType === 'fillin' && (
+                <div className="text-sm text-gray-600 dark:text-gray-300">
+                  Everyone: write a short answer. The Turn Master will pick a winner (anonymous).
+                </div>
+              )}
+
+              {partyRoundType === 'nhie' && (
+                <div className="text-sm text-gray-600 dark:text-gray-300">
+                  Tap “I Have” or “I Haven’t”. Lives remaining are shown after each NHIE round.
+                </div>
+              )}
+
+              <button
+                onClick={async () => {
+                  try { playSound('click'); } catch {}
+                  await updateDoc(doc(db,'sessions',sessionCode), { partyPhase: 'collect' });
+                  setPartyPhase('collect');
+                }}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+              >
+                Start Round
+              </button>
+            </div>
+          )}
+
+          {/* COLLECT */}
+          {partyPhase === 'collect' && (
+            <div className="space-y-6">
+              {/* Superlatives: pick a player */}
+              {partyRoundType === 'superlatives' && (
+                <>
+                  <p className="text-gray-700 dark:text-gray-200">Vote for who fits this prompt best:</p>
+                  <div className="space-y-2">
+                    {players.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => voteForSuperlative(p.id)}
+                        className="w-full p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 text-left"
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                  {amHost && (
+                    <button
+                      onClick={tallyAndAdvanceParty}
+                      className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                    >
+                      Tally Votes
+                    </button>
+                  )}
+                </>
+              )}
+
+              {/* Fill-in: anonymous write-ins */}
+              {partyRoundType === 'fillin' && (
+                <>
+                  <FillInEntry onSubmit={submitFillIn} />
+                  {amHost && (
+                    <button
+                      onClick={async () => {
+                        // move to results selection screen for Turn Master
+                        await updateDoc(doc(db,'sessions',sessionCode), { partyPhase: 'results' });
+                        setPartyPhase('results');
+                      }}
+                      className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                    >
+                      Reveal Answers
+                    </button>
+                  )}
+                </>
+              )}
+
+              {/* NHIE: I Have / I Haven't */}
+              {partyRoundType === 'nhie' && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={async () => {
+                        const sessionRef = doc(db,'sessions',sessionCode);
+                        const fresh = (await getDoc(sessionRef)).data() || {};
+                        const existing = (fresh.votes || []).filter(v => v.voterId !== myUid);
+                        // submissionIndex: 1 = HAVE, 0 = HAVENT
+                        const next = [...existing, { voterId: myUid, submissionIndex: 1 }];
+                        await updateDoc(sessionRef, { votes: next });
+                      }}
+                      className="py-3 px-6 rounded-xl font-semibold bg-white dark:bg-gray-900 border-2 border-red-400 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/10 transition"
+                    >
+                      I Have
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const sessionRef = doc(db,'sessions',sessionCode);
+                        const fresh = (await getDoc(sessionRef)).data() || {};
+                        const existing = (fresh.votes || []).filter(v => v.voterId !== myUid);
+                        const next = [...existing, { voterId: myUid, submissionIndex: 0 }];
+                        await updateDoc(sessionRef, { votes: next });
+                      }}
+                      className="py-3 px-6 rounded-xl font-semibold bg-white dark:bg-gray-900 border-2 border-green-400 text-green-600 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/10 transition"
+                    >
+                      I Haven’t
+                    </button>
+                  </div>
+                  {amHost && (
+                    <button
+                      onClick={tallyAndAdvanceParty}
+                      className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                    >
+                      Show Results
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* RESULTS */}
+          {partyPhase === 'results' && (
+            <div className="space-y-6">
+              {partyRoundType === 'superlatives' && (
+                <>
+                  <p className="text-gray-700 dark:text-gray-200">Votes:</p>
+                  <div className="space-y-1 text-sm">
+                    {players.map(p => {
+                      const count = (votes || []).filter(v => v.targetPlayerId === p.id).length;
+                      return (
+                        <div key={p.id} className="flex items-center justify-between">
+                          <span>{p.name}</span><span className="font-semibold">{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {amHost && (
+                    <button
+                      onClick={continuePartyAfterResults}
+                      className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                    >
+                      Next Round
+                    </button>
+                  )}
+                </>
+              )}
+
+              {partyRoundType === 'fillin' && (
+                <>
+                  <p className="text-gray-700 dark:text-gray-200">Pick your favorite:</p>
+                  <div className="space-y-2">
+                    {submissionsAnon.map((s, i) => (
+                      <button
+                        key={i}
+                        onClick={() => voteForFillIn(i)}
+                        disabled={turnMasterId !== myUid}
+                        className={`w-full p-4 rounded-xl border-2 ${turnMasterId === myUid ? 'hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20' : 'opacity-60 cursor-not-allowed'} border-gray-200 dark:border-gray-600 text-left`}
+                      >
+                        <span className="font-mono mr-2">{s.label}.</span> {s.text}
+                      </button>
+                    ))}
+                  </div>
+                  {amHost && (
+                    <button
+                      onClick={tallyAndAdvanceParty}
+                      className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                    >
+                      Confirm Winner
+                    </button>
+                  )}
+                </>
+              )}
+
+              {partyRoundType === 'nhie' && (
+                <>
+                  <p className="text-gray-700 dark:text-gray-200">Lives after this round:</p>
+                  <div className="space-y-1 text-sm">
+                    {players.map(p => (
+                      <div key={p.id} className="flex items-center justify-between">
+                        <span>{p.name}</span><span className="font-semibold">{(lives || {})[p.id] ?? 10}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {amHost && (
+                    <button
+                      onClick={continuePartyAfterResults}
+                      className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all"
+                    >
+                      Next Round
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* =========================
      Fallback
   ========================= */
   return null;
+}
+
+/* =========================
+   Inline components
+========================= */
+function FillInEntry({ onSubmit }) {
+  const [val, setVal] = useState('');
+  return (
+    <div>
+      <textarea
+        value={val}
+        onChange={(e)=>setVal(e.target.value)}
+        placeholder="Write your short answer…"
+        rows={3}
+        className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none bg-white dark:bg-gray-900"
+      />
+      <button
+        onClick={() => { if (val.trim()) { onSubmit(val.trim()); setVal(''); } }}
+        className="w-full mt-2 bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-2 px-4 rounded-xl font-semibold hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all"
+      >
+        Submit
+      </button>
+    </div>
+  );
 }
