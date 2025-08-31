@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   MessageCircle, Heart, Sparkles, Lightbulb, Target, Flame,
   Volume2, VolumeX, SkipForward, HelpCircle, X, Trophy, Edit3
@@ -11,12 +11,14 @@ import {
   doc, setDoc, getDoc, updateDoc, onSnapshot, serverTimestamp, arrayUnion
 } from 'firebase/firestore';
 
-// Unified questions & prompt banks
 import * as QLIB from '../lib/questionCategories';
 
-/** -------------------------------------------------------
- * Utilities
- * ------------------------------------------------------*/
+/* ------------------ button classes (raw Tailwind) ------------------ */
+const BTN_PRIMARY = 'bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed';
+const BTN_SECONDARY = 'bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 py-3 px-6 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800 transition-all';
+const BTN_OUTLINE_ORANGE = 'bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 py-3 px-6 rounded-xl font-semibold hover:bg-orange-50 dark:hover:bg-orange-900/10 transition-all';
+const BTN_DISABLED = 'bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 text-gray-400 cursor-not-allowed py-3 px-6 rounded-xl font-semibold';
+
 const iconMap = { Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle };
 
 const FALLBACK_CATEGORIES = {
@@ -28,7 +30,6 @@ const FALLBACK_CATEGORIES = {
 };
 
 const LIB = (() => {
-  // resolve library + helpers defensively
   const cats =
     QLIB.questionCategories ||
     QLIB.categories ||
@@ -54,19 +55,21 @@ const LIB = (() => {
   };
 })();
 
-/** -------------------------------------------------------
- * Main component
- * ------------------------------------------------------*/
+/* -------------------------- main component -------------------------- */
 export default function Page() {
-  // Core session/ui state
-  const [gameState, setGameState] = useState('welcome'); // welcome | createOrJoin | waitingRoom | categoryVoting | categoryPicking | playing | quickstart
-  const [mode, setMode] = useState('classic'); // classic | quickstart | superlatives | never | fill_blank
+  // Flow stages: welcome -> survey -> createOrJoin/quickstart -> waitingRoom -> voting -> picking -> playing
+  const [gameState, setGameState] = useState('welcome');
+  const [mode, setMode] = useState('classic');
 
+  // identity + survey
   const [playerName, setPlayerName] = useState('');
+  const [surveyAnswers, setSurveyAnswers] = useState({ vibe: 'balanced', topics: [], introvert: 'neutral' });
+
+  // session
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
 
-  // Session doc fields
+  // doc fields
   const [players, setPlayers] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [currentCategory, setCurrentCategory] = useState('');
@@ -78,9 +81,9 @@ export default function Page() {
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [categoryVotes, setCategoryVotes] = useState({});
   const [scores, setScores] = useState({});
-  const [round, setRound] = useState(null); // { mode, phase, prompt, submissions, votes, responses, winner }
+  const [round, setRound] = useState(null);
 
-  // Local ui
+  // ui
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -89,24 +92,26 @@ export default function Page() {
   const [questionDraft, setQuestionDraft] = useState('');
   const [myAnswerDraft, setMyAnswerDraft] = useState('');
 
-  // Derived
+  // derived
   const CATEGORIES = LIB.cats;
   const libraryOK = !!QLIB.getRandomQuestion;
+  const myUid = auth?.currentUser?.uid || null;
 
+  // stable refs
   const unsubscribeRef = useRef(null);
   const prevTurnIdxRef = useRef(0);
 
-  /** ---------------- Notifications & Sounds --------------- */
+  /* ----------------------------- helpers ----------------------------- */
   const showToast = (message, emoji = '🎉') => {
     setNotification({ message, emoji });
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => setNotification(null), 2600);
+    showToast._t = setTimeout(() => setNotification(null), 2400);
   };
 
-  // Tiny click/confirm sounds — safe no-op if WebAudio blocked
-  const playClick = () => { if (!audioEnabled) return; try { new AudioContext().close(); } catch {} };
+  // do NOT call AudioContext on every keystroke; only on explicit taps
+  const toggleSound = () => setAudioEnabled(v => !v);
 
-  /** ---------------- Firestore: session listener ----------- */
+  /* ---------------------- Firestore subscription --------------------- */
   const listenToSession = useCallback((code) => {
     if (!code) return;
     if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
@@ -134,20 +139,19 @@ export default function Page() {
         setSkipsUsedThisTurn(0);
       }
 
-      const st = data.gameState || 'waitingRoom';
-      if (st !== gameState) setGameState(st);
+      // Do not force a screen jump here; let host’s buttons set gameState.
+      // Only snap to waitingRoom if this is a brand new listener and the doc says so.
+      if (gameState === 'createOrJoin' && data.gameState) setGameState(data.gameState);
     }, (e) => console.error('onSnapshot error', e));
 
     unsubscribeRef.current = unsub;
   }, [db, gameState]);
 
-  useEffect(() => {
-    return () => {
-      if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
-    };
+  useEffect(() => () => {
+    if (unsubscribeRef.current) { unsubscribeRef.current(); unsubscribeRef.current = null; }
   }, []);
 
-  /** ---------------- Create / Join flow ------------------- */
+  /* -------------------------- create / join -------------------------- */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
@@ -184,14 +188,11 @@ export default function Page() {
       id: uid,
       name: playerName,
       isHost: true,
-      surveyAnswers: {},
+      surveyAnswers,
       joinedAt: new Date().toISOString(),
     };
     const ok = await createFirebaseSession(code, hostPlayer);
-    if (!ok) {
-      alert('Failed to create session. Check auth + rules. See console.');
-      return;
-    }
+    if (!ok) { alert('Failed to create session. Check auth + rules.'); return; }
     setSessionCode(code);
     setIsHost(true);
     setPlayers([hostPlayer]);
@@ -210,18 +211,18 @@ export default function Page() {
     if (!snap.exists()) { alert('Session not found.'); return; }
     const data = snap.data() || {};
     const alreadyIn = (data.players || []).some(p => p?.id === uid);
+
     if (!alreadyIn) {
       const newPlayer = {
         id: uid,
         name: playerName,
         isHost: false,
-        surveyAnswers: {},
+        surveyAnswers,
         joinedAt: new Date().toISOString(),
       };
       try {
         await updateDoc(sessionRef, { players: arrayUnion(newPlayer) });
       } catch {
-        // fallback merge if arrayUnion collides on shape
         const fresh = (await getDoc(sessionRef)).data() || {};
         const next = [...(fresh.players || []), newPlayer]
           .filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
@@ -236,14 +237,12 @@ export default function Page() {
     listenToSession(code);
   };
 
-  /** ---------------- Voting & category selection ---------- */
-  const myUid = auth?.currentUser?.uid || null;
-
+  /* -------------------- voting & category picking -------------------- */
   const saveMyCategoryVotes = async (choices) => {
-    if (!sessionCode || !myUid) return;
-    const sessionRef = doc(db, 'sessions', sessionCode);
-    // update only the top-level `categoryVotes` field
-    await updateDoc(sessionRef, { [`categoryVotes.${myUid}`]: choices.slice(0, 3) });
+    if (!sessionCode || !auth?.currentUser?.uid) return;
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      [`categoryVotes.${auth.currentUser.uid}`]: choices.slice(0, 3)
+    });
     showToast('Votes saved', '🗳️');
   };
 
@@ -277,7 +276,6 @@ export default function Page() {
   };
 
   const hostPickCategory = async (category) => {
-    // Host-only to comply with rules (players can still see & play)
     if (!isHost || !sessionCode) return;
     const asker = players[currentTurnIndex] || players[0];
     const q = LIB.getRandomQuestion(category, [currentQuestion]);
@@ -333,10 +331,9 @@ export default function Page() {
     setSkipsUsedThisTurn(0);
   };
 
-  /** ---------------- Classic: write-in & skip -------------- */
+  /* ---------------------- classic write-in / skip --------------------- */
   const submitQuestionWriteIn = async () => {
     if (!sessionCode || !questionDraft.trim()) return;
-    // players are allowed to change `round` (but not currentQuestion). display uses round.prompt first.
     const newQ = questionDraft.trim();
     const sessionRef = doc(db,'sessions',sessionCode);
     const snap = await getDoc(sessionRef); const data = snap.data() || {};
@@ -348,7 +345,6 @@ export default function Page() {
   };
 
   const hostSkipQuestion = async () => {
-    // host-only because it changes currentQuestion/currentCategory under current rules
     if (!isHost || !sessionCode) return;
     if (skipsUsedThisTurn >= maxSkipsPerTurn) { showToast('Skip already used this turn', '⏭️'); return; }
     const cat = currentCategory || selectedCategories[0] || 'icebreakers';
@@ -378,7 +374,7 @@ export default function Page() {
     showToast('Answer submitted', '✅');
   };
 
-  /** ---------------- Mode switch & helpers ----------------- */
+  /* --------------------------- mode switching ------------------------- */
   const hostInitMode = async (newMode) => {
     if (!isHost || !sessionCode) return;
     let prompt = '';
@@ -403,9 +399,9 @@ export default function Page() {
     setScores(updated);
   };
 
-  /** ---------------- UI: shared elements ------------------- */
+  /* ------------------------------- UI -------------------------------- */
   const TopBar = () => (
-    <div className="fixed top-4 right-4 z-40 flex items-center gap-2">
+    <div className="fixed top-4 right-4 z-40 flex items-center gap-2 pointer-events-auto">
       <span className={`hidden sm:inline-flex px-2 py-1 rounded-lg text-xs font-medium ${libraryOK ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}>
         {libraryOK ? 'Library' : 'Fallback'}
       </span>
@@ -419,7 +415,7 @@ export default function Page() {
           </span>
         </div>
       )}
-      <button onClick={()=>setAudioEnabled(v=>!v)} className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all" title={audioEnabled?'Sound: on':'Sound: off'} aria-label="Toggle sound">
+      <button onClick={toggleSound} className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all" aria-label="Toggle sound">
         {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
       </button>
       <button onClick={()=>setShowHelp(true)} className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all" aria-label="Help">
@@ -441,9 +437,9 @@ export default function Page() {
           <h3 className="text-xl font-semibold">How to Play</h3>
         </div>
         <div className="space-y-3 text-gray-700 dark:text-gray-200">
-          <p>Pick a mode. In Classic, the host advances turns and can skip. Others can write a custom question and type answers.</p>
-          <p>In Superlatives, vote for who fits best. In Never Have I Ever, choose “I have/haven’t”. In Fill-in-the-Blank, submit, vote, then reveal a winner.</p>
-          <p className="text-sm text-gray-500 dark:text-gray-300">Be kind, be curious — share at your pace.</p>
+          <p>Start with a quick survey, then host or join a session.</p>
+          <p>Classic: Host advances, can skip. Anyone can propose a custom question and type answers.</p>
+          <p>Party modes: Superlatives (vote), Never (I have/haven’t), Fill-in-the-Blank (submit → vote → reveal).</p>
         </div>
       </div>
     </div>
@@ -454,6 +450,25 @@ export default function Page() {
       <div className="flex items-center space-x-2">
         <span className="text-2xl">{notification.emoji}</span>
         <span className="font-medium text-gray-800 dark:text-gray-100">{notification.message}</span>
+      </div>
+    </div>
+  );
+
+  const Frame = ({ title, children, showBack }) => (
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <TopBar /><HelpModal /><NotificationToast />
+      <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-xl font-bold">{title}</h1>
+          {sessionCode && <span className="text-xs text-gray-500 dark:text-gray-300">Session: {sessionCode}</span>}
+        </div>
+        {children}
+        {showBack && (
+          <button onClick={()=>setGameState('waitingRoom')}
+            className={`w-full mt-4 ${BTN_SECONDARY}`}>
+            Back to Lobby
+          </button>
+        )}
       </div>
     </div>
   );
@@ -472,33 +487,14 @@ export default function Page() {
         <Btn k="classic" label="Classic" />
         <Btn k="superlatives" label="Superlatives" />
         <Btn k="never" label="Never" />
-        <Btn k="fill_blank" label="Fill-in-the-Blank" />
+        <Btn k="fill_blank" label="Fill-Blank" />
       </div>
     );
   };
 
-  const Frame = ({ title, children, showBack }) => (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-      <TopBar /><HelpModal /><NotificationToast />
-      <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-        <div className="flex items-center justify-between mb-3">
-          <h1 className="text-xl font-bold">{title}</h1>
-          {sessionCode && <span className="text-xs text-gray-500 dark:text-gray-300">Session: {sessionCode}</span>}
-        </div>
-        {children}
-        {showBack && (
-          <button onClick={()=>setGameState('waitingRoom')}
-            className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
-            Back to Lobby
-          </button>
-        )}
-      </div>
-    </div>
-  );
+  /* ------------------------------ Screens ----------------------------- */
 
-  /** ---------------- Screens ------------------------------- */
-
-  // Welcome / Mode chooser
+  // 1) Welcome
   if (gameState === 'welcome') {
     return (
       <Frame title="Overshare">
@@ -506,48 +502,118 @@ export default function Page() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
             <MessageCircle className="w-8 h-8 text-white" />
           </div>
-          <p className="text-gray-600 dark:text-gray-300">Pick a mode to get started</p>
+          <p className="text-gray-100/90"></p>
+          <p className="text-gray-200"></p>
         </div>
-        <input type="text" placeholder="Enter your name" value={playerName} onChange={(e)=>setPlayerName(e.target.value)}
-          className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 mb-4" />
-        <div className="space-y-3">
-          <button onClick={()=>{ if(!playerName.trim()) return; setGameState('createOrJoin'); }} className="w-full btn-primary">
-            Multiplayer (Classic + Party Modes)
-          </button>
-          <button onClick={()=>{ if(!playerName.trim()) return; setMode('quickstart'); setGameState('quickstart'); }} className="w-full btn-secondary">
-            Quickstart (Solo)
-          </button>
+        <input
+          type="text"
+          inputMode="text"
+          autoComplete="name"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="Enter your name"
+          value={playerName}
+          onChange={(e)=>setPlayerName(e.target.value)}
+          onKeyDown={(e)=>e.stopPropagation()}
+          className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 mb-4"
+        />
+        <button
+          onClick={()=>{ if(!playerName.trim()) return; setGameState('survey'); }}
+          className={`w-full ${BTN_PRIMARY}`}
+        >
+          Continue
+        </button>
+      </Frame>
+    );
+  }
+
+  // 2) Survey (quick + stable controls)
+  if (gameState === 'survey') {
+    const toggleTopic = (t) => {
+      setSurveyAnswers((prev) => {
+        const has = (prev.topics||[]).includes(t);
+        return { ...prev, topics: has ? prev.topics.filter(x=>x!==t) : [...(prev.topics||[]), t] };
+      });
+    };
+    return (
+      <Frame title="Quick Survey">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm mb-1 text-gray-600 dark:text-gray-300">Vibe</label>
+            <div className="grid grid-cols-3 gap-2">
+              {['light','balanced','deep'].map(v=>(
+                <button key={v} onClick={()=>setSurveyAnswers(s=>({...s, vibe:v}))}
+                  className={`p-2 rounded-xl border-2 ${surveyAnswers.vibe===v?'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900`}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-gray-600 dark:text-gray-300">Topics (optional)</label>
+            <div className="grid grid-cols-2 gap-2">
+              {['work','family','travel','relationships','sports','art'].map(t=>(
+                <button key={t} onClick={()=>toggleTopic(t)}
+                  className={`p-2 rounded-xl border-2 ${surveyAnswers.topics?.includes(t)?'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900 text-left`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm mb-1 text-gray-600 dark:text-gray-300">Social energy</label>
+            <div className="grid grid-cols-3 gap-2">
+              {['introvert','neutral','extrovert'].map(v=>(
+                <button key={v} onClick={()=>setSurveyAnswers(s=>({...s, introvert:v}))}
+                  className={`p-2 rounded-xl border-2 ${surveyAnswers.introvert===v?'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'} bg-white dark:bg-gray-900`}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="mt-5 space-y-3">
+          <button onClick={()=>setGameState('createOrJoin')} className={`w-full ${BTN_PRIMARY}`}>Multiplayer (Host / Join)</button>
+          <button onClick={()=>{ setMode('quickstart'); setGameState('quickstart'); }} className={`w-full ${BTN_SECONDARY}`}>Quickstart (Solo)</button>
         </div>
       </Frame>
     );
   }
 
-  // Create or Join
+  // 3) Create or Join
   if (gameState === 'createOrJoin') {
     return (
       <Frame title="Create or Join">
         <div className="space-y-3">
-          <button onClick={handleCreateSession} className="w-full btn-primary">Create Game</button>
+          <button onClick={handleCreateSession} className={`w-full ${BTN_PRIMARY}`}>Create Game</button>
           <div className="flex gap-2">
-            <input value={sessionCode} onChange={(e)=>setSessionCode(e.target.value)} placeholder="Enter code"
-              className="flex-1 p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900" />
-            <button onClick={handleJoinSession} className="px-5 btn-secondary">Join</button>
+            <input
+              value={sessionCode}
+              onChange={(e)=>setSessionCode(e.target.value.toUpperCase())}
+              onKeyDown={(e)=>e.stopPropagation()}
+              placeholder="Enter code"
+              inputMode="text"
+              autoCorrect="off"
+              spellCheck={false}
+              className="flex-1 p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-900"
+            />
+            <button onClick={handleJoinSession} className={`${BTN_SECONDARY}`}>Join</button>
           </div>
         </div>
       </Frame>
     );
   }
 
-  // Quickstart Solo Component
+  // 4) Quickstart Solo
   if (gameState === 'quickstart') {
     return <QuickstartSolo
       CATEGORIES={CATEGORIES}
       getQuestion={LIB.getRandomQuestion}
-      onBack={() => { setGameState('welcome'); setMode('classic'); }}
+      onBack={() => { setGameState('survey'); setMode('classic'); }}
     />;
   }
 
-  // Waiting Room
+  // 5) Waiting Room
   if (gameState === 'waitingRoom') {
     return (
       <Frame title="Waiting Room">
@@ -561,7 +627,10 @@ export default function Page() {
           ))}
         </div>
         {isHost ? (
-          <button onClick={()=> updateDoc(doc(db,'sessions',sessionCode), { gameState:'categoryVoting', categoryVotes:{} }).then(()=> setGameState('categoryVoting'))} className="w-full btn-primary">
+          <button
+            onClick={()=> updateDoc(doc(db,'sessions',sessionCode), { gameState:'categoryVoting', categoryVotes:{} }).then(()=> setGameState('categoryVoting'))}
+            className={`w-full ${BTN_PRIMARY}`}
+          >
             Start Category Voting
           </button>
         ) : (
@@ -571,7 +640,7 @@ export default function Page() {
     );
   }
 
-  // Category Voting
+  // 6) Category Voting
   if (gameState === 'categoryVoting') {
     return (
       <Frame title="Pick up to 3 categories">
@@ -582,17 +651,17 @@ export default function Page() {
           onChange={(arr)=>saveMyCategoryVotes(arr)}
         />
         {isHost && (
-          <button onClick={hostFinalizeVoting} className="w-full mt-4 btn-primary">Finalize & Continue</button>
+          <button onClick={hostFinalizeVoting} className={`w-full mt-4 ${BTN_PRIMARY}`}>Finalize & Continue</button>
         )}
       </Frame>
     );
   }
 
-  // Category Picking
+  // 7) Category Picking
   if (gameState === 'categoryPicking') {
     const currentPlayer = players[currentTurnIndex] || players[0];
     const entries = (availableCategories||[]).map(k => [k, CATEGORIES[k]]).filter(([,v]) => !!v);
-    const canPick = isHost; // host-only under current rules
+    const canPick = isHost; // host-only per rules
     return (
       <Frame title="Category Picking" showBack>
         <p className="text-center text-sm text-gray-600 dark:text-gray-300 mb-3">Current player: <b>{currentPlayer?.name||'—'}</b></p>
@@ -620,14 +689,13 @@ export default function Page() {
     );
   }
 
-  // Playing — route by mode
+  // 8) Playing (routes to the active mode)
   if (gameState === 'playing') {
     if (mode === 'superlatives' && round) {
       return <SuperlativesScreen
         round={round}
         players={players}
         isHost={isHost}
-        scores={scores}
         onStart={() => updateDoc(doc(db,'sessions',sessionCode), { round: { ...round, phase:'vote' } }).then(()=>setRound(r=>({ ...r, phase:'vote' })))}
         onNextPrompt={async () => {
           const next = LIB.getRandomSuperlative ? LIB.getRandomSuperlative([round.prompt]) : 'Most likely to...';
@@ -644,7 +712,6 @@ export default function Page() {
           setRound({ ...r, phase:'vote', votes });
         }}
         onReveal={async () => {
-          // host tallies and assigns +1 point to winners
           const counts = {};
           Object.values(round.votes||{}).forEach(t => { counts[t] = (counts[t]||0)+1; });
           const ordered = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
@@ -698,7 +765,6 @@ export default function Page() {
         round={round}
         players={players}
         isHost={isHost}
-        scores={scores}
         onSubmit={async (text) => {
           const uid = auth?.currentUser?.uid; if (!uid || !text.trim()) return;
           const sessionRef = doc(db,'sessions',sessionCode);
@@ -722,7 +788,6 @@ export default function Page() {
           setRound({ ...r, phase:'collect_votes', votes, submissions: r.submissions||{} });
         }}
         onReveal={async () => {
-          // host tallies, +1 score to winner, winner becomes next asker
           const counts = {};
           Object.values(round.votes||{}).forEach(t => { counts[t] = (counts[t]||0)+1; });
           const ordered = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
@@ -746,12 +811,11 @@ export default function Page() {
       </FillBlankScreen>;
     }
 
-    // Classic
+    // Classic default
     const currentPlayer = players[currentTurnIndex] || players[0];
     const roundNo = players.length ? Math.floor((turnHistory.length||0)/players.length)+1 : 1;
     const turnNo = players.length ? ((turnHistory.length||0)%players.length)+1 : 1;
     const questionToShow = (round?.mode==='classic' && round?.prompt) ? round.prompt : currentQuestion;
-
     const cat = CATEGORIES[currentCategory] || null;
     const IconCmp = cat ? (iconMap[cat.icon] || MessageCircle) : MessageCircle;
 
@@ -773,14 +837,14 @@ export default function Page() {
             <p className="text-lg leading-relaxed">{questionToShow}</p>
           </div>
 
-          {/* Asker can propose custom question (writes to round.prompt) */}
           {auth?.currentUser?.uid === (players[currentTurnIndex]?.id) && (
             <div className="mb-4">
               <div className="space-y-2">
                 <textarea rows={2} value={questionDraft} onChange={(e)=>setQuestionDraft(e.target.value)}
+                  onKeyDown={(e)=>e.stopPropagation()}
                   className="w-full p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900" placeholder="(Optional) Propose a custom question..." />
                 <div className="flex gap-2">
-                  <button onClick={submitQuestionWriteIn} className="flex-1 btn-secondary">
+                  <button onClick={submitQuestionWriteIn} className={`flex-1 ${BTN_SECONDARY}`}>
                     <Edit3 className="w-4 h-4 inline mr-2" /> Use Custom
                   </button>
                 </div>
@@ -788,12 +852,12 @@ export default function Page() {
             </div>
           )}
 
-          {/* Optional answer write-in for anyone */}
           <div className="mb-4">
             <div className="flex gap-2">
               <input value={myAnswerDraft} onChange={(e)=>setMyAnswerDraft(e.target.value)} placeholder="(Optional) Type your answer..."
+                onKeyDown={(e)=>e.stopPropagation()}
                 className="flex-1 p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900" />
-              <button onClick={submitMyAnswer} className="px-4 btn-secondary">Send</button>
+              <button onClick={submitMyAnswer} className={`${BTN_SECONDARY}`}>Send</button>
             </div>
             {round?.answers && Object.keys(round.answers).length > 0 && (
               <p className="text-xs text-gray-500 dark:text-gray-300 mt-2">
@@ -802,14 +866,13 @@ export default function Page() {
             )}
           </div>
 
-          {/* Host-only controls to comply with current rules */}
           {isHost ? (
             <>
               <button onClick={hostSkipQuestion}
-                className={`w-full py-3 rounded-xl font-semibold text-lg transition-all ${skipsUsedThisTurn < maxSkipsPerTurn ? 'btn-outline-orange' : 'btn-disabled'}`}>
+                className={`w-full ${skipsUsedThisTurn < maxSkipsPerTurn ? BTN_OUTLINE_ORANGE : BTN_DISABLED}`}>
                 <SkipForward className="w-5 h-5 mr-2 inline" /> {skipsUsedThisTurn < maxSkipsPerTurn ? 'Skip This Question' : 'Skip Used'} <span className="ml-1 text-sm">({skipsUsedThisTurn}/{maxSkipsPerTurn})</span>
               </button>
-              <button onClick={hostNextTurn} className="w-full mt-3 btn-primary">
+              <button onClick={hostNextTurn} className={`w-full mt-3 ${BTN_PRIMARY}`}>
                 Next Turn → {players.length ? players[(currentTurnIndex+1)%players.length]?.name : '—'}
               </button>
             </>
@@ -823,13 +886,10 @@ export default function Page() {
     );
   }
 
-  // Default
   return null;
 }
 
-/** -------------------------------------------------------
- * Subcomponents
- * ------------------------------------------------------*/
+/* ---------------------------- subcomponents ---------------------------- */
 
 function QuickstartSolo({ CATEGORIES, getQuestion, onBack }) {
   const [qsSelected, setQsSelected] = useState(['icebreakers']);
@@ -863,8 +923,8 @@ function QuickstartSolo({ CATEGORIES, getQuestion, onBack }) {
           <p className="text-lg leading-relaxed">{qsQuestion}</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={()=>{ if(qsSelected.length===0) return; const c = qsSelected[Math.random()*qsSelected.length|0]; pickQuestion(c); }} className="flex-1 btn-primary">New Question</button>
-          <button onClick={onBack} className="flex-1 btn-secondary">Back</button>
+          <button onClick={()=>{ if(qsSelected.length===0) return; const c = qsSelected[Math.random()*qsSelected.length|0]; pickQuestion(c); }} className={`flex-1 ${BTN_PRIMARY}`}>New Question</button>
+          <button onClick={onBack} className={`flex-1 ${BTN_SECONDARY}`}>Back</button>
         </div>
       </div>
     </div>
@@ -911,18 +971,30 @@ function CategoryVoting({ CATEGORIES, myUid, myVotes, onChange }) {
   );
 }
 
+function FrameLocal({ title, children }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-xl font-bold">{title}</h1>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function SuperlativesScreen({ round, players, isHost, onStart, onNextPrompt, onVote, onReveal, children }) {
   const prompt = round.prompt || 'Most likely to...';
   const votes = round.votes || {};
   const everyoneVoted = players.length>0 && players.every(p => votes[p?.id]);
-
   return (
     <FrameLocal title="Superlatives">
       <h2 className="text-2xl font-bold text-center mb-4">{prompt}</h2>
       {round.phase === 'prompt' && isHost && (
         <div className="flex gap-2">
-          <button onClick={onStart} className="flex-1 btn-primary">Use This</button>
-          <button onClick={onNextPrompt} className="flex-1 btn-secondary">New Prompt</button>
+          <button onClick={onStart} className={`flex-1 ${BTN_PRIMARY}`}>Use This</button>
+          <button onClick={onNextPrompt} className={`flex-1 ${BTN_SECONDARY}`}>New Prompt</button>
         </div>
       )}
       {round.phase === 'vote' && (
@@ -930,14 +1002,13 @@ function SuperlativesScreen({ round, players, isHost, onStart, onNextPrompt, onV
           <p className="text-center text-sm text-gray-600 dark:text-gray-300 mb-3">Vote for who fits best (not yourself)</p>
           <div className="space-y-2">
             {players.map((p)=>(
-              <button key={p.id} disabled={false}
-                onClick={()=> onVote(p.id)}
+              <button key={p.id} onClick={()=> onVote(p.id)}
                 className={`w-full p-3 rounded-xl border-2 ${votes[auth?.currentUser?.uid]===p.id ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20':'border-gray-200 dark:border-gray-600'}`}>
                 {p.name}
               </button>
             ))}
           </div>
-          {isHost && <button disabled={!everyoneVoted} onClick={onReveal} className="w-full mt-4 btn-primary">Reveal {everyoneVoted?'':'(waiting...)'}</button>}
+          {isHost && <button disabled={!everyoneVoted} onClick={onReveal} className={`w-full mt-4 ${BTN_PRIMARY}`}>Reveal {everyoneVoted?'':'(waiting...)'}</button>}
         </>
       )}
       {round.phase === 'reveal' && (
@@ -958,10 +1029,10 @@ function NeverScreen({ round, players, isHost, onRespond, onReveal, onNextPrompt
       {round.phase !== 'reveal' ? (
         <>
           <div className="flex gap-2 mb-4">
-            <button onClick={()=>onRespond(true)} className={`flex-1 btn-secondary ${responses[auth?.currentUser?.uid]===true?'ring-2 ring-purple-500':''}`}>I have</button>
-            <button onClick={()=>onRespond(false)} className={`flex-1 btn-secondary ${responses[auth?.currentUser?.uid]===false?'ring-2 ring-purple-500':''}`}>I haven’t</button>
+            <button onClick={()=>onRespond(true)} className={`flex-1 ${BTN_SECONDARY} ${responses[auth?.currentUser?.uid]===true?'ring-2 ring-purple-500':''}`}>I have</button>
+            <button onClick={()=>onRespond(false)} className={`flex-1 ${BTN_SECONDARY} ${responses[auth?.currentUser?.uid]===false?'ring-2 ring-purple-500':''}`}>I haven’t</button>
           </div>
-          {isHost && <button disabled={!everyoneAnswered} onClick={onReveal} className="w-full btn-primary">Reveal</button>}
+          {isHost && <button disabled={!everyoneAnswered} onClick={onReveal} className={`w-full ${BTN_PRIMARY}`}>Reveal</button>}
         </>
       ) : (
         <>
@@ -973,7 +1044,7 @@ function NeverScreen({ round, players, isHost, onRespond, onReveal, onNextPrompt
               </div>
             ))}
           </div>
-          {isHost && <button onClick={onNextPrompt} className="w-full btn-primary">Next Prompt</button>}
+          {isHost && <button onClick={onNextPrompt} className={`w-full ${BTN_PRIMARY}`}>Next Prompt</button>}
         </>
       )}
       {children}
@@ -981,7 +1052,7 @@ function NeverScreen({ round, players, isHost, onRespond, onReveal, onNextPrompt
   );
 }
 
-function FillBlankScreen({ round, players, isHost, scores, onSubmit, onStartVoting, onVote, onReveal, onNextPrompt, children }) {
+function FillBlankScreen({ round, players, isHost, onSubmit, onStartVoting, onVote, onReveal, onNextPrompt, children }) {
   const [myDraft, setMyDraft] = useState('');
   const submissions = round.submissions || {};
   const votes = round.votes || {};
@@ -998,12 +1069,13 @@ function FillBlankScreen({ round, players, isHost, scores, onSubmit, onStartVoti
           {!submissions[auth?.currentUser?.uid] && (
             <div className="space-y-2 mb-3">
               <textarea value={myDraft} onChange={(e)=>setMyDraft(e.target.value)} rows={3}
+                onKeyDown={(e)=>e.stopPropagation()}
                 className="w-full p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900" placeholder="Your answer..." />
-              <button onClick={()=>{ if(myDraft.trim()) onSubmit(myDraft); setMyDraft(''); }} className="w-full btn-primary">Submit</button>
+              <button onClick={()=>{ if(myDraft.trim()) onSubmit(myDraft); setMyDraft(''); }} className={`w-full ${BTN_PRIMARY}`}>Submit</button>
             </div>
           )}
           <p className="text-xs text-gray-500 dark:text-gray-300 text-center">Submissions: {Object.keys(submissions).length}/{players.length}</p>
-          {isHost && <button disabled={!allSubmitted} onClick={onStartVoting} className="w-full mt-3 btn-secondary">Start Voting</button>}
+          {isHost && <button disabled={!allSubmitted} onClick={onStartVoting} className={`w-full mt-3 ${BTN_SECONDARY}`}>Start Voting</button>}
         </>
       )}
 
@@ -1019,7 +1091,7 @@ function FillBlankScreen({ round, players, isHost, scores, onSubmit, onStartVoti
               </button>
             ))}
           </div>
-          {isHost && <button disabled={!everyoneVoted} onClick={onReveal} className="w-full mt-4 btn-primary">Reveal {everyoneVoted?'':'(waiting...)'}</button>}
+          {isHost && <button disabled={!everyoneVoted} onClick={onReveal} className={`w-full mt-4 ${BTN_PRIMARY}`}>Reveal {everyoneVoted?'':'(waiting...)'}</button>}
         </>
       )}
 
@@ -1038,24 +1110,11 @@ function FillBlankScreen({ round, players, isHost, scores, onSubmit, onStartVoti
               );
             })}
           </div>
-          {isHost && <button onClick={onNextPrompt} className="w-full btn-primary">Next Prompt</button>}
+          {isHost && <button onClick={onNextPrompt} className={`w-full ${BTN_PRIMARY}`}>Next Prompt</button>}
         </>
       )}
       {children}
     </FrameLocal>
-  );
-}
-
-function FrameLocal({ title, children }) {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-        <div className="flex items-center justify-between mb-3">
-          <h1 className="text-xl font-bold">{title}</h1>
-        </div>
-        {children}
-      </div>
-    </div>
   );
 }
 
