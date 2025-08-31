@@ -167,28 +167,61 @@ export default function Overshare() {
     } catch { return null; }
   };
   const playSound = (type) => {
+  try {
     const audio = getAudio();
     if (!audio) return;
+
     const tone = (seq) => {
       const osc = audio.createOscillator();
       const gain = audio.createGain();
-      osc.connect(gain); gain.connect(audio.destination);
-      gain.gain.setValueAtTime(0.1, audio.currentTime);
-      seq(osc, gain, audio.currentTime);
-      osc.start();
+
+      osc.type = 'sine';
+      osc.connect(gain);
+      gain.connect(audio.destination);
+
+      // Ensure we start BEFORE scheduling any stops/ramps
+      const startAt = audio.currentTime + 0.001;
+      gain.gain.setValueAtTime(0.1, startAt);
+      osc.start(startAt);
+
+      // Let the sequence schedule ramps and the stop AFTER start
+      try {
+        seq(osc, gain, startAt);
+      } catch {
+        // If sequence scheduling fails, make sure we stop soon
+        try { osc.stop(startAt + 0.15); } catch {}
+      }
     };
+
     const sounds = {
-      click: () => tone((o, g, t) => { o.frequency.setValueAtTime(760, t); g.gain.exponentialRampToValueAtTime(0.01, t + 0.08); o.stop(t + 0.08); }),
-      success: () => tone((o, g, t) => { o.frequency.setValueAtTime(523, t); o.frequency.setValueAtTime(659, t + 0.1); g.gain.exponentialRampToValueAtTime(0.01, t + 0.22); o.stop(t + 0.22); }),
-      turn: () => tone((o, g, t) => { o.frequency.setValueAtTime(440, t); o.frequency.setValueAtTime(554, t + 0.15); g.gain.exponentialRampToValueAtTime(0.01, t + 0.3); o.stop(t + 0.3); })
+      click: () =>
+        tone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(800, t0);
+          osc.frequency.exponentialRampToValueAtTime(600, t0 + 0.10);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.10);
+          osc.stop(t0 + 0.11);
+        }),
+      success: () =>
+        tone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(523, t0);   // C5
+          osc.frequency.setValueAtTime(659, t0 + 0.10); // E5
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+          osc.stop(t0 + 0.24);
+        }),
+      turn: () =>
+        tone((osc, gain, t0) => {
+          osc.frequency.setValueAtTime(440, t0);       // A4
+          osc.frequency.setValueAtTime(554.37, t0 + 0.15); // C#5
+          gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.30);
+          osc.stop(t0 + 0.32);
+        }),
     };
+
     if (sounds[type]) sounds[type]();
-  };
-  const showNotification = (message, emoji = '🎉') => {
-    setNotification({ message, emoji });
-    window.clearTimeout(showNotification._t || 0);
-    showNotification._t = window.setTimeout(() => setNotification(null), 3000);
-  };
+  } catch {
+    // Never let audio issues break UX
+  }
+};
 
   /* ----------------------------
      Firestore helpers
