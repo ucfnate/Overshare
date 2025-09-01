@@ -1,10 +1,9 @@
-// app/page.js
-'use client';
-
-// Page-level caching/runtime — prevent prerender errors on "/"
+// Route segment options for "/"
 export const dynamic = 'force-dynamic';
-export const revalidate = 0;           // must be a number or false
 export const fetchCache = 'force-no-store';
+export const revalidate = 0; // must be a number or false
+
+'use client';
 
 /* =========================================================
    Imports
@@ -27,9 +26,7 @@ import {
   Trophy,
   CheckCircle2,
   ThumbsUp,
-  Wand2,
-  Copy,
-  LogOut
+  Wand2
 } from 'lucide-react';
 
 import { db, pushAlert, listenToAlerts } from '../lib/firebase';
@@ -49,67 +46,6 @@ import {
 } from '../lib/questionCategories';
 
 /* =========================================================
-   Tiny confetti (no deps)
-========================================================= */
-function useConfetti() {
-  const canvasRef = useRef(null);
-  const animRef = useRef(0);
-
-  const burst = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width = window.innerWidth;
-    const H = canvas.height = window.innerHeight;
-    const N = 120;
-    const parts = [...Array(N)].map(()=>({
-      x: W/2, y: H/3,
-      vx: (Math.random()*2-1)*6,
-      vy: (Math.random()*-1-1)*8,
-      g: 0.25 + Math.random()*0.15,
-      s: 2+Math.random()*3,
-      a: 1,
-      r: Math.random()*Math.PI
-    }));
-    let t = 0;
-    cancelAnimationFrame(animRef.current);
-    const step = () => {
-      t++;
-      ctx.clearRect(0,0,W,H);
-      for (const p of parts) {
-        p.vy += p.g;
-        p.x += p.vx;
-        p.y += p.vy;
-        p.r += 0.1;
-        p.a -= 0.009;
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, p.a);
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.r);
-        ctx.fillStyle = ['#8b5cf6','#ec4899','#06b6d4','#10b981','#f59e0b'][Math.floor(Math.random()*5)];
-        ctx.fillRect(-p.s, -p.s, p.s*2, p.s*2);
-        ctx.restore();
-      }
-      if (t < 180) animRef.current = requestAnimationFrame(step);
-      else ctx.clearRect(0,0,W,H);
-    };
-    step();
-  }, []);
-
-  const Canvas = useCallback(() => (
-    <canvas
-      ref={canvasRef}
-      className="pointer-events-none fixed inset-0 z-[60]"
-      aria-hidden="true"
-    />
-  ), []);
-
-  return { burst, Canvas };
-}
-
-const vibrate = (ms=20) => { try { navigator.vibrate?.(ms); } catch {} };
-
-/* =========================================================
    Component
 ========================================================= */
 export default function Overshare() {
@@ -118,7 +54,6 @@ export default function Overshare() {
   ========================================================= */
   const [gameState, setGameState] = useState('welcome'); // welcome → modeSelect → soloSetup/soloPlay OR createOrJoin → waitingRoom → mpModeSelect → …
   const [playerName, setPlayerName] = useState('');
-  const [playerColor, setPlayerColor] = useState('prpl');
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
 
@@ -139,11 +74,10 @@ export default function Overshare() {
   const [myVotedCategories, setMyVotedCategories] = useState([]);
   const [hasVotedCategories, setHasVotedCategories] = useState(false);
 
-  // Party mode session blob
-  // { state, type, prompt, round, turnIndex, submissions, done, votes, nhiAnswers, guesses, scores, winner, tiebreak, lastEvents }
-  const [party, setParty] = useState(null);
+  // Party mode session blob (lives in Firestore under `party`)
+  const [party, setParty] = useState(null); // { state, type, prompt, round, turnIndex, submissions, done, votes, nhiAnswers, guesses, scores, winner, tiebreak }
 
-  // Solo
+  // Solo mode
   const [soloCategories, setSoloCategories] = useState([]);
   const [soloAsked, setSoloAsked] = useState([]);
 
@@ -159,15 +93,9 @@ export default function Overshare() {
      Refs
   ========================================================= */
   const unsubscribeRef = useRef(null);
-  const alertsUnsubRef = useRef(null);
+  const alertUnsubRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
-  const lastRevealRoundRef = useRef(0);
-
-  /* =========================================================
-     Confetti
-  ========================================================= */
-  const { burst: burstConfetti, Canvas: ConfettiCanvas } = useConfetti();
 
   /* =========================================================
      Config / Memos
@@ -176,15 +104,6 @@ export default function Overshare() {
     () => ({ Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle }),
     []
   );
-
-  const PALETTE = useMemo(()=>[
-    { key: 'prpl', cls: 'from-purple-500 to-pink-500' },
-    { key: 'blue', cls: 'from-blue-500 to-cyan-500' },
-    { key: 'grn',  cls: 'from-emerald-500 to-teal-500' },
-    { key: 'org',  cls: 'from-orange-500 to-red-500' },
-    { key: 'ind',  cls: 'from-indigo-500 to-purple-500' },
-  ],[]);
-  const colorClassFor = (key) => (PALETTE.find(p => p.key === key)?.cls || 'from-purple-500 to-pink-500');
 
   // Fallback categories if library not found
   const FALLBACK_CATEGORIES = useMemo(
@@ -278,7 +197,7 @@ export default function Overshare() {
     }
   };
 
-  // synth safe
+  // SAFE synth (never throws on click)
   const playSound = (type) => {
     try {
       const audio = getAudio();
@@ -335,11 +254,25 @@ export default function Overshare() {
     showNotification._t = window.setTimeout(() => setNotification(null), 3000);
   };
 
-  const notify = (type, message) => {
-    setNotification({ message, emoji: type === 'success' ? '✅' : type === 'warning' ? '⚠️' : '🔔' });
-    window.clearTimeout((notify._t || 0));
-    notify._t = window.setTimeout(() => setNotification(null), 3000);
-  };
+  // Alerts (cross-device toasts via Firestore)
+  useEffect(() => {
+    if (!sessionCode) return;
+    if (alertUnsubRef.current) {
+      alertUnsubRef.current();
+      alertUnsubRef.current = null;
+    }
+    alertUnsubRef.current = listenToAlerts(sessionCode, (alert) => {
+      if (!alert?.message) return;
+      showNotification(alert.message, '🔔');
+      try { playSound('success'); } catch {}
+    });
+    return () => {
+      if (alertUnsubRef.current) {
+        alertUnsubRef.current();
+        alertUnsubRef.current = null;
+      }
+    };
+  }, [sessionCode]);
 
   /* =========================================================
      Helpers: Questions & Party Prompts
@@ -442,12 +375,13 @@ export default function Overshare() {
         if (!snap.exists()) return;
         const data = snap.data() || {};
 
+        // new player joined toast
         const newCount = (data.players || []).length;
         if (previousCount > 0 && newCount > previousCount) {
           const newPlayer = (data.players || [])[newCount - 1];
           if (newPlayer && newPlayer.name !== playerName) {
             showNotification(`${newPlayer.name} joined the game!`, '👋');
-            try { playSound('success'); vibrate(); } catch {}
+            try { playSound('success'); } catch {}
           }
         }
         previousCount = newCount;
@@ -465,30 +399,22 @@ export default function Overshare() {
         setMpMode(data.mode || null);
         setParty(data.party || null);
 
+        // reset skip per turn
         const incomingTurn = typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
         if (incomingTurn !== prevTurnIndexRef.current) {
           setSkipsUsedThisTurn(0);
           prevTurnIndexRef.current = incomingTurn;
         }
 
+        // state
         const incomingRaw = data.gameState || 'waitingRoom';
         const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
         if (incoming !== gameState) {
           setGameState(incoming);
           if (incoming === 'playing') {
-            try { playSound('success'); vibrate(); } catch {}
-          } else if (incoming === 'categoryPicking' || incoming === 'party_setup' || incoming === 'party_active') {
+            try { playSound('success'); } catch {}
+          } else if (incoming === 'categoryPicking' || incoming === 'party_setup') {
             try { playSound('turn'); } catch {}
-          }
-        }
-
-        // confetti when reveal triggers for a new round
-        if (data?.party?.state === 'reveal') {
-          const r = data.party.round || 1;
-          if (r !== lastRevealRoundRef.current) {
-            lastRevealRoundRef.current = r;
-            burstConfetti();
-            vibrate(30);
           }
         }
       },
@@ -499,24 +425,17 @@ export default function Overshare() {
 
     unsubscribeRef.current = unsubscribe;
     return unsubscribe;
-  }, [playerName, gameState, burstConfetti]);
-
-  // Alerts listener starts when we have code+name
-  useEffect(() => {
-    if (!sessionCode || !playerName) return;
-    if (alertsUnsubRef.current) alertsUnsubRef.current();
-    alertsUnsubRef.current = listenToAlerts(sessionCode, playerName, ({ type, message }) => {
-      notify(type, message);
-      try { playSound('success'); vibrate(); } catch {}
-    });
-    return () => { if (alertsUnsubRef.current) alertsUnsubRef.current(); alertsUnsubRef.current = null; };
-  }, [sessionCode, playerName]);
+  }, [playerName, gameState]);
 
   useEffect(() => {
     return () => {
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
         unsubscribeRef.current = null;
+      }
+      if (alertUnsubRef.current) {
+        alertUnsubRef.current();
+        alertUnsubRef.current = null;
       }
       try { if (audioCtxRef.current?.close) audioCtxRef.current.close(); } catch {}
     };
@@ -530,12 +449,14 @@ export default function Overshare() {
     const hostPlayer = {
       id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
       name: playerName,
-      color: playerColor,
       isHost: true,
       joinedAt: new Date().toISOString()
     };
 
+    console.log('[create] start', { code, myId: hostPlayer.id, name: playerName });
+
     const ok = await createFirebaseSession(code, hostPlayer);
+    console.log('[create] setDoc ok:', ok);
     if (!ok) {
       alert('Failed to create session. Please try again.');
       return;
@@ -546,8 +467,9 @@ export default function Overshare() {
     setPlayers([hostPlayer]);
     listenToSession(code);
 
+    // Push to waiting room
     setGameState('waitingRoom');
-    try { playSound('success'); vibrate(); } catch {}
+    try { playSound('success'); } catch {}
     showNotification(`Lobby created: ${code}`, '🧩');
   };
 
@@ -568,7 +490,6 @@ export default function Overshare() {
       const newPlayer = {
         id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
         name: playerName,
-        color: playerColor,
         isHost: false,
         joinedAt: new Date().toISOString()
       };
@@ -584,11 +505,11 @@ export default function Overshare() {
     setIsHost(false);
     listenToSession(code);
     setGameState('waitingRoom');
-    try { playSound('success'); vibrate(); } catch {}
+    try { playSound('success'); } catch {}
   };
 
   /* =========================================================
-     Classic Mode
+     Classic Mode (unchanged core)
   ========================================================= */
   const calculateTopCategories = (votes) => {
     const counts = {};
@@ -619,7 +540,7 @@ export default function Overshare() {
       currentQuestionAsker: currentPlayer.name
     });
 
-    try { playSound('success'); vibrate(); } catch {}
+    try { playSound('success'); } catch {}
   };
 
   const handleSkipQuestion = async () => {
@@ -687,20 +608,20 @@ export default function Overshare() {
         round: 1,
         turnIndex: 0,
         submissions: {},  // name -> [answers]
-        done: {},         // name -> true when finished (per phase)
+        done: {},         // name -> true when finished
         votes: {},        // name -> votedForName (superlatives)
-        nhiAnswers: {},   // name -> true/false
-        guesses: {},      // host guesses
+        nhiAnswers: {},   // name -> true/false (has)
+        guesses: {},      // name -> 'has'|'hasnt' from turn owner
         scores: {},       // name -> number
         winner: null,
-        tiebreak: 0,
-        lastEvents: []
+        tiebreak: 0
       }
     });
     setMpMode('party');
   };
 
   const partyChooseTypeAndPrompt = () => {
+    // 1:1:1 ratio via round modulo
     const round = (party?.round || 1);
     const mod = (round - 1) % 3;
     const type = mod === 0 ? 'fill' : mod === 1 ? 'super' : 'nhi';
@@ -711,12 +632,8 @@ export default function Overshare() {
     return { type, prompt };
   };
 
-  // Next-turn-owner starts the round (not just host)
-  const nextTurnOwnerStartPartyRound = async () => {
+  const hostStartPartyRound = async () => {
     if (!sessionCode || !party) return;
-    const turnOwner = players[party.turnIndex]?.name;
-    if (playerName !== turnOwner) return;
-
     const { type, prompt } = partyChooseTypeAndPrompt();
     const next = {
       ...party,
@@ -729,8 +646,6 @@ export default function Overshare() {
       nhiAnswers: {},
       guesses: {},
       winner: null,
-      lastEvents: [],
-      // keep tiebreak counter only in super
       tiebreak: type === 'super' ? (party.tiebreak || 0) : 0
     };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next, gameState: 'party_active' });
@@ -741,7 +656,7 @@ export default function Overshare() {
     if (!sessionCode || !party) return;
     const me = playerName;
     const turnPlayer = players[party.turnIndex]?.name;
-    if (me === turnPlayer) return;
+    if (me === turnPlayer) return; // turn owner cannot submit
     const trimmed = (text || '').trim();
     if (!trimmed) return;
 
@@ -755,18 +670,19 @@ export default function Overshare() {
     showNotification('Answer submitted', '✍️');
   };
 
-  const markPhaseDone = async () => {
+  const markFillDone = async () => {
     if (!sessionCode || !party) return;
     const me = playerName;
     const done = { ...(party.done || {}), [me]: true };
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.done': done });
   };
 
-  // Host/turn-owner picks favorite among anonymous fill answers
-  const pickFillFavorite = async (answerId) => {
+  // Pick favorite (turn owner only, anonymous list)
+  const hostPickFavorite = async (answerId) => {
     if (!sessionCode || !party) return;
+    const me = playerName;
     const turnOwner = players[party.turnIndex]?.name;
-    if (playerName !== turnOwner) return;
+    if (me !== turnOwner) return;
 
     const all = Object.values(party.submissions || {}).flat();
     const picked = all.find(a => a.id === answerId);
@@ -775,39 +691,38 @@ export default function Overshare() {
     const scores = { ...(party.scores || {}) };
     scores[picked.by] = (scores[picked.by] || 0) + 1;
 
-    // Winner goes next (spec)
+    // Winner goes next
     const winnerIndex = Math.max(0, players.findIndex(p => p.name === picked.by));
-    const lastEvents = [{ t: 'fill_winner', text: `${picked.by} wins: favorite answer picked.` }];
-
-    // alert winner
-    try { await pushAlert(sessionCode, picked.by, `🎉 ${turnOwner} picked your answer! +1`, 'success'); } catch {}
 
     const next = {
       ...party,
       state: 'reveal',
       winner: picked.by,
-      scores,
-      lastEvents,
-      // Set next turn owner now
-      turnIndex: winnerIndex
+      scores
     };
 
     await updateDoc(doc(db, 'sessions', sessionCode), {
       party: next,
       currentTurnIndex: winnerIndex
     });
+
+    // Alert winner on all devices
+    await pushAlert(sessionCode, {
+      type: 'fillWin',
+      message: `${turnOwner} picked your answer — you're up next!`,
+      meta: { winner: picked.by }
+    });
   };
 
-  // After reveal → setup (only next turn owner sees Start)
-  const advanceAfterReveal = async () => {
+  const hostAdvanceAfterReveal = async () => {
     if (!sessionCode || !party) return;
-    const nextTurnOwner = players[party.turnIndex]?.name;
-    if (playerName !== nextTurnOwner) return; // only next player
 
+    // Keep party.turnIndex in sync with session's currentTurnIndex
     const next = {
       ...party,
       state: 'setup',
-      round: (party.round || 1) + 1
+      round: (party.round || 1) + 1,
+      turnIndex: currentTurnIndex
     };
     await updateDoc(doc(db, 'sessions', sessionCode), {
       party: next,
@@ -815,189 +730,111 @@ export default function Overshare() {
     });
   };
 
-  /* ---------- Superlatives ---------- */
-  // players choose locally, then press Submit to mark done
-  const [superChoice, setSuperChoice] = useState(null);
-
-  const submitSuperVote = async () => {
+  // Superlatives: everyone (including turn owner) votes for a player
+  const submitSuperVote = async (voteForName) => {
     if (!sessionCode || !party) return;
-    if (!players.some(p => p.name === superChoice)) return;
-    const votes = { ...(party.votes || {}), [playerName]: superChoice };
-    const done = { ...(party.done || {}), [playerName]: true };
-    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.votes': votes, 'party.done': done });
-    try { playSound('success'); vibrate(); } catch {}
+    const me = playerName;
+    if (!players.some(p => p.name === voteForName)) return;
+    const votes = { ...(party.votes || {}), [me]: voteForName };
+    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.votes': votes });
   };
 
-  const tallySuperVotes = async () => {
+  const hostTallySuper = async () => {
     if (!sessionCode || !party) return;
-    const turnOwner = players[party.turnIndex]?.name;
-    if (playerName !== turnOwner) return; // only turn owner closes voting
 
-    const everyone = players.map(p => p.name);
-    const doneAll = everyone.every(n => party.done?.[n]);
+    const votes = { ...(party.votes || {}) };
+    if (players.length === 0 || !players.every(p => votes[p.name])) {
+      // Not everyone voted yet — optional: allow host to tally anyway
+    }
 
-    if (!doneAll) return; // safety
-
-    const votes = party.votes || {};
+    // tally
     const tally = {};
     Object.values(votes).forEach(name => { tally[name] = (tally[name] || 0) + 1; });
     const sorted = Object.entries(tally).sort((a,b)=>b[1]-a[1]);
-
-    if (!sorted.length) return;
+    if (sorted.length === 0) return;
 
     const topCount = sorted[0][1];
     const tied = sorted.filter(([_,c]) => c === topCount).map(([n]) => n);
 
     if (tied.length > 1) {
-      // tiebreaker: new superlative, reset votes/done
+      // tiebreaker: pick a new superlative prompt and reset votes
       const next = {
         ...party,
         prompt: randomOf(SUPERLATIVES),
         votes: {},
-        done: {},
         tiebreak: (party.tiebreak || 0) + 1,
         state: 'vote_super'
       };
       await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
-      return;
+    } else {
+      // winner → gets point AND goes next (to keep tempo consistent)
+      const winner = sorted[0][0];
+      const winnerIndex = Math.max(0, players.findIndex(p => p.name === winner));
+      const scores = { ...(party.scores || {}) };
+      scores[winner] = (scores[winner] || 0) + 1;
+      const next = { ...party, state: 'reveal', winner, scores };
+      await updateDoc(doc(db, 'sessions', sessionCode), {
+        party: next,
+        currentTurnIndex: winnerIndex
+      });
+      await pushAlert(sessionCode, {
+        type: 'superWin',
+        message: `${winner} won the superlative — you're up next!`,
+        meta: { winner }
+      });
     }
-
-    // winner
-    const winner = sorted[0][0];
-    const scores = { ...(party.scores || {}) };
-    scores[winner] = (scores[winner] || 0) + 1;
-
-    const lastEvents = [{ t: 'super_win', text: `${winner} wins "${party.prompt}".` }];
-
-    try {
-      await pushAlert(sessionCode, winner, `🏆 You won "${party.prompt}" +1`, 'success');
-      for (const [voter, target] of Object.entries(votes)) {
-        if (target === winner && voter !== winner) {
-          await pushAlert(sessionCode, voter, `👍 Nice pick — ${winner} won that round.`, 'info');
-        }
-      }
-    } catch {}
-
-    // For Superlatives, rotate turn sequentially
-    const nextTurnIndex = (party.turnIndex + 1) % players.length;
-
-    const next = { ...party, state: 'reveal', winner, scores, lastEvents, turnIndex: nextTurnIndex };
-    await updateDoc(doc(db, 'sessions', sessionCode), { party: next, currentTurnIndex: nextTurnIndex });
   };
 
-  /* ---------- NHI ---------- */
-  const [nhiChoice, setNhiChoice] = useState(null); // true (has) | false (hasn't)
-
-  const submitNhiAnswer = async () => {
+  // Never Have I Ever: non-turn players submit has/hasn't
+  const submitNhiAnswer = async (hasDone) => {
     if (!sessionCode || !party) return;
     const me = playerName;
     const turnPlayer = players[party.turnIndex]?.name;
     if (me === turnPlayer) return;
-    if (nhiChoice === null) return;
-    const ans = { ...(party.nhiAnswers || {}), [me]: !!nhiChoice };
-    const done = { ...(party.done || {}), [me]: true };
-    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.nhiAnswers': ans, 'party.done': done });
-    try { playSound('success'); vibrate(); } catch {}
+    const ans = { ...(party.nhiAnswers || {}), [me]: !!hasDone };
+    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.nhiAnswers': ans });
   };
 
-  const moveNhiToGuessing = async () => {
-    if (!sessionCode || !party) return;
-    const turnOwner = players[party.turnIndex]?.name;
-    if (playerName !== turnOwner) return;
-    // only proceed if all others submitted
-    const others = players.filter(p => p.name !== turnOwner);
-    const allSubmitted = others.length>0 && others.every(p => party.done?.[p.name]);
-    if (!allSubmitted) return;
-
-    const next = { ...party, state: 'guessing_nhi' };
-    await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
-  };
-
-  // Host (turn owner) submits guesses
+  // Host guesses has/hasn't for each player
   const hostSubmitNhiGuesses = async (guessesMap) => {
     if (!sessionCode || !party) return;
-    const turnOwner = players[party.turnIndex]?.name;
-    if (playerName !== turnOwner) return;
 
     const actual = party.nhiAnswers || {};
     const scores = { ...(party.scores || {}) };
     let hostPoints = 0;
-    const lastEvents = [];
 
     Object.entries(actual).forEach(([name, has]) => {
       const guess = guessesMap[name];
       if (guess === undefined) return;
       const correct = (guess === true && has === true) || (guess === false && has === false);
       if (correct) {
-        hostPoints += 1;
-        scores[name] = (scores[name] || 0) + 1;
-        lastEvents.push({ t:'nhi_player', text:`${name} +1 (guessed ${has ? 'has' : "hasn't"})` });
+        hostPoints += 1;                       // host (turn owner) gains a point
+        scores[name] = (scores[name] || 0) + 1; // correctly guessed player gains a point
       }
     });
 
-    const ownerName = players[party.turnIndex]?.name;
-    if (hostPoints) {
-      scores[ownerName] = (scores[ownerName] || 0) + hostPoints;
-      lastEvents.unshift({ t:'nhi_host', text:`${ownerName} guessed ${hostPoints} correctly.` });
-    }
+    const turnOwner = players[party.turnIndex]?.name;
+    scores[turnOwner] = (scores[turnOwner] || 0) + hostPoints;
 
-    // Alerts
-    try {
-      if (hostPoints) await pushAlert(sessionCode, ownerName, `🧠 You guessed ${hostPoints} correctly (+${hostPoints})`, 'success');
-      for (const [name, has] of Object.entries(actual)) {
-        if (guessesMap[name] === has) {
-          await pushAlert(sessionCode, name, `✨ ${ownerName} guessed you ${has ? 'have' : "haven't"} — +1`, 'success');
-        }
-      }
-    } catch {}
+    // rotate to next player for next round
+    const nextIndex = ((party.turnIndex || 0) + 1) % (players.length || 1);
 
-    // NHI turn rotates sequentially
-    const nextTurnIndex = (party.turnIndex + 1) % players.length;
+    const next = { ...party, state: 'reveal', winner: null, guesses: guessesMap, scores };
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      party: next,
+      currentTurnIndex: nextIndex
+    });
 
-    const next = { ...party, state: 'reveal', winner: null, guesses: guessesMap, scores, lastEvents, turnIndex: nextTurnIndex };
-    await updateDoc(doc(db, 'sessions', sessionCode), { party: next, currentTurnIndex: nextTurnIndex });
+    await pushAlert(sessionCode, {
+      type: 'nhiReveal',
+      message: `${turnOwner} locked guesses — scores updated!`,
+      meta: { turnOwner, hostPoints }
+    });
   };
 
   /* =========================================================
-     Reusable UI bits
+     UI bits
   ========================================================= */
-  function LeaderboardRail({ scores }) {
-    const entries = Object.entries(scores || {}).sort((a,b) => (b[1]||0)-(a[1]||0));
-    const top = entries.slice(0, 3);
-    const [open, setOpen] = useState(false);
-    return (
-      <div className="fixed right-3 top-3 z-40">
-        <button
-          onClick={() => setOpen(o=>!o)}
-          className="mb-2 px-3 py-1 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-sm"
-          title="Toggle leaderboard"
-        >
-          {open ? 'Hide' : 'Top 3'}
-        </button>
-
-        <div className="rounded-2xl bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 shadow-lg p-3 min-w-[220px]">
-          <div className="flex items-center gap-2 mb-2">
-            <Trophy className="w-4 h-4" />
-            <span className="font-semibold text-sm">Leaderboard</span>
-          </div>
-          {!open ? (
-            <div className="text-sm">
-              {top.length ? top.map(([n,s],i)=>(
-                <div key={n} className="flex justify-between"><span>{i+1}. {n}</span><span className="font-semibold">{s}</span></div>
-              )) : <div className="text-gray-500">No scores yet</div>}
-            </div>
-          ) : (
-            <div className="max-h-56 overflow-auto text-sm space-y-1">
-              {entries.length ? entries.map(([n,s],i)=>(
-                <div key={n} className="flex justify-between"><span>{i+1}. {n}</span><span className="font-semibold">{s}</span></div>
-              )) : <div className="text-gray-500">No scores yet</div>}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   const TopBar = () => (
     <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
       <span
@@ -1121,10 +958,7 @@ export default function Overshare() {
               highlight === p?.name ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-900/30' : ''
             }`}
           >
-            <div className="flex items-center gap-2">
-              <span className={`inline-block w-3 h-3 rounded-full bg-gradient-to-r ${colorClassFor(p?.color)}`} />
-              <span className="font-medium">{p?.name || 'Player'}</span>
-            </div>
+            <span className="font-medium">{p?.name || 'Player'}</span>
             <div className="flex items-center gap-2">
               {p?.isHost && (
                 <span className="text-xs bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-200 px-2 py-1 rounded-full">
@@ -1141,1234 +975,4 @@ export default function Overshare() {
     </div>
   );
 
-  const Scoreboard = ({ scores = {}, inline = false }) => {
-    const entries = Object.entries(scores);
-    const sorted = entries.sort((a,b)=> (b[1]||0) - (a[1]||0)).slice(0, 3);
-    if (inline) {
-      return (
-        <div className="flex items-center gap-2">
-          <Trophy className="w-4 h-4 text-yellow-500" />
-          <span className="text-sm">Top: {sorted.map(([n,s])=>`${n} (${s})`).join(' · ') || '—'}</span>
-        </div>
-      );
-    }
-    return (
-      <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600">
-        <div className="flex items-center gap-2 mb-2">
-          <Crown className="w-5 h-5 text-yellow-500" />
-          <h4 className="font-semibold">Leaderboard</h4>
-        </div>
-        <ul className="space-y-1">
-          {sorted.length ? sorted.map(([n,s],i)=>(
-            <li key={n} className="flex justify-between">
-              <span>{i+1}. {n}</span>
-              <span className="font-semibold">{s}</span>
-            </li>
-          )) : <li className="text-sm text-gray-500 dark:text-gray-300">No scores yet</li>}
-        </ul>
-      </div>
-    );
-  };
-
-  const Confirm = ({ open, onClose, onConfirm, title='Are you sure?', body='This will take you back to the lobby.' }) => {
-    if (!open) return null;
-    return (
-      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={(e)=>{ if (e.target===e.currentTarget) onClose(); }}>
-        <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-2xl p-6">
-          <h3 className="text-lg font-semibold mb-2">{title}</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">{body}</p>
-          <div className="flex gap-2 justify-end">
-            <button className="px-3 py-2 rounded-lg border dark:border-gray-600" onClick={onClose}>Cancel</button>
-            <button className="px-3 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white" onClick={onConfirm}>Confirm</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  /* =========================================================
-     SCREENS
-  ========================================================= */
-
-  // WELCOME
-  if (gameState === 'welcome') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
-              <MessageCircle className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-3xl font-bold mb-2">Overshare</h1>
-            <p className="text-gray-600 dark:text-gray-300">Personalized conversation games that bring people closer together</p>
-          </div>
-
-          <div className="mb-4">
-            <input
-              type="text"
-              placeholder="Enter your name"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              inputMode="text"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-            />
-          </div>
-
-          <div className="mb-6">
-            <div className="text-sm text-gray-600 dark:text-gray-300 mb-2">Pick your color</div>
-            <div className="flex gap-2 justify-center">
-              {PALETTE.map(p => (
-                <button
-                  key={p.key}
-                  onMouseDown={(e)=>e.preventDefault()}
-                  onClick={() => setPlayerColor(p.key)}
-                  className={`w-7 h-7 rounded-full bg-gradient-to-br ${p.cls} ring-2 ${playerColor===p.key ? 'ring-white' : 'ring-transparent'}`}
-                  aria-label={`Choose ${p.key}`}
-                />
-              ))}
-            </div>
-          </div>
-
-          <button
-            onClick={() => { if (!playerName.trim()) return; setGameState('modeSelect'); try { playSound('click'); } catch {} }}
-            disabled={!playerName.trim()}
-            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Let’s Get Started
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // MODE SELECT (Solo vs Multiplayer)
-  if (gameState === 'modeSelect') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold mb-6">How do you want to play today, {playerName}?</h2>
-
-          <div className="space-y-4">
-            <button
-              onClick={() => { setAppMode('solo'); setGameState('soloSetup'); try { playSound('click'); } catch {} }}
-              className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-4 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all"
-            >
-              Solo Quickstart (one device)
-            </button>
-
-            <button
-              onClick={() => { setAppMode('multi'); setGameState('createOrJoin'); try { playSound('click'); } catch {} }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
-            >
-              <Users className="w-5 h-5 mr-2" />
-              Multiplayer
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // SOLO SETUP (choose categories)
-  if (gameState === 'soloSetup') {
-    const entries = Object.entries(CATEGORIES || {});
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <h2 className="text-2xl font-bold mb-4">Pick your categories</h2>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">Use your library. You can skip questions you don’t like.</p>
-          <div className="space-y-3 mb-6">
-            {entries.map(([key, category]) => {
-              const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-              const selected = soloCategories.includes(key);
-              return (
-                <button
-                  key={key}
-                  onClick={() => {
-                    setSoloCategories(prev => prev.includes(key) ? prev.filter(k=>k!==key) : [...prev, key]);
-                    try { playSound('click'); } catch {}
-                  }}
-                  className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
-                    selected ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-600 hover:border-purple-300'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'}`}>
-                      <IconComponent className="w-4 h-4 text-white" />
-                    </div>
-                    <div>
-                      <div className="font-semibold">{category?.name || key}</div>
-                      <div className="text-sm text-gray-600 dark:text-gray-300">{category?.description || ''}</div>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={() => {
-              if (soloCategories.length === 0) return;
-              setGameState('soloPlay');
-              try { playSound('success'); vibrate(); } catch {}
-              const firstCat = soloCategories[0];
-              const q = getQuestion(firstCat, []);
-              setCurrentCategory(firstCat);
-              setCurrentQuestion(q);
-              setSoloAsked([q]);
-            }}
-            disabled={soloCategories.length === 0}
-            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50"
-          >
-            Start Solo
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // SOLO PLAY
-  if (gameState === 'soloPlay') {
-    const changeCategory = (key) => {
-      const q = getQuestion(key, soloAsked);
-      setCurrentCategory(key);
-      setCurrentQuestion(q);
-      setSoloAsked((prev) => [...prev, q]);
-    };
-    const skipSolo = () => {
-      const q = getQuestion(currentCategory, soloAsked);
-      setCurrentQuestion(q);
-      setSoloAsked((prev) => [...prev, q]);
-      try { playSound('click'); } catch {}
-    };
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-4">
-            <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">Category</div>
-            <div className="flex flex-wrap gap-2">
-              {soloCategories.map((key)=>(
-                <button
-                  key={key}
-                  onClick={()=>changeCategory(key)}
-                  className={`px-3 py-1 rounded-lg border text-sm ${key===currentCategory ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-400 text-purple-700 dark:text-purple-200':'border-gray-300 dark:border-gray-600'}`}
-                >
-                  {CATEGORIES[key]?.name || key}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400 mb-6">
-            <p className="text-lg leading-relaxed">{currentQuestion}</p>
-          </div>
-
-          <div className="flex gap-3">
-            <button
-              onClick={skipSolo}
-              className="flex-1 bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 py-3 px-6 rounded-xl font-semibold hover:bg-orange-50 dark:hover:bg-orange-900/10"
-            >
-              Skip
-            </button>
-            <button
-              onClick={()=>{ const q=getQuestion(currentCategory, soloAsked); setSoloAsked(p=>[...p,q]); setCurrentQuestion(q); try{playSound('turn')}catch{} }}
-              className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg"
-            >
-              Next
-            </button>
-          </div>
-
-          <button
-            onClick={()=>setGameState('modeSelect')}
-            className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
-          >
-            Back
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // MULTI: Create or Join
-  if (gameState === 'createOrJoin') {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <HelpModal />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold mb-6">Ready to play, {playerName}!</h2>
-
-          <div className="space-y-4">
-            <button
-              onClick={()=>{ try{playSound('click')}catch{}; handleCreateSession(); }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
-            >
-              <Users className="w-5 h-5 mr-2" />
-              Create Multiplayer Lobby
-            </button>
-
-            <div className="flex items-center my-4">
-              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600" />
-              <span className="px-4 text-gray-500 dark:text-gray-300 text-sm">or</span>
-              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600" />
-            </div>
-
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="Enter session code"
-                value={sessionCode}
-                onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                inputMode="text"
-                autoComplete="one-time-code"
-                className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-              />
-              <button
-                onClick={()=>{ try{playSound('click')}catch{}; handleJoinSession(); }}
-                disabled={!sessionCode.trim()}
-                className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Join by Code
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // WAITING ROOM
-  if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find((p) => p?.name === playerName);
-    const [confirmLeave, setConfirmLeave] = useState(false);
-
-    const copyCode = async () => {
-      try {
-        await navigator.clipboard.writeText(sessionCode);
-        notify('success', 'Code copied');
-      } catch {
-        notify('warning', 'Copy failed');
-      }
-    };
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl relative">
-          <div className="absolute top-4 right-4">
-            {isHost && (
-              <>
-                <button
-                  onClick={()=> setConfirmLeave(true)}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-sm"
-                >
-                  <LogOut className="w-4 h-4" /> Return to Lobby
-                </button>
-                <Confirm
-                  open={confirmLeave}
-                  onClose={()=> setConfirmLeave(false)}
-                  title="Return to Lobby?"
-                  body="This will bring everyone back to the lobby."
-                  onConfirm={async ()=> {
-                    setConfirmLeave(false);
-                    if (!sessionCode) return;
-                    await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingRoom', mode: null, party: null });
-                    setMpMode(null);
-                    setParty(null);
-                    notify('info', 'Returned to lobby');
-                  }}
-                />
-              </>
-            )}
-          </div>
-
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold mb-2">Lobby {sessionCode}</h2>
-            <p className="text-gray-600 dark:text-gray-300">Share this code to join</p>
-            <button
-              onClick={copyCode}
-              className="mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 text-sm"
-              title="Copy code"
-            >
-              <Copy className="w-4 h-4" /> Copy code
-            </button>
-          </div>
-
-          <PlayerList players={players} title="Players" />
-
-          {isNewPlayer && (
-            <button
-              onClick={async () => {
-                try { playSound('click'); } catch {}
-                const newPlayer = {
-                  id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
-                  name: playerName,
-                  color: playerColor,
-                  isHost: false,
-                  joinedAt: new Date().toISOString()
-                };
-                const sessionRef = doc(db, 'sessions', sessionCode);
-                const snap = await getDoc(sessionRef);
-                if (snap.exists()) {
-                  try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
-                  catch {
-                    const data = snap.data() || {};
-                    const updated = [...(data.players || []), newPlayer];
-                    await updateDoc(sessionRef, { players: updated });
-                  }
-                  try { playSound('success'); vibrate(); } catch {}
-                }
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all mb-4"
-            >
-              Join Lobby
-            </button>
-          )}
-
-          {isHost && !isNewPlayer && (
-            <button
-              onClick={async () => {
-                if (!sessionCode) return;
-                try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'mpModeSelect' });
-                setGameState('mpModeSelect');
-              }}
-              disabled={players.length < 2}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Start Game
-            </button>
-          )}
-
-          {!isHost && !isNewPlayer && (
-            <p className="text-gray-500 dark:text-gray-300">Waiting for host to continue…</p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // MP MODE SELECT
-  if (gameState === 'mpModeSelect') {
-    const partyDisabled = players.length < 3;
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold mb-6">Choose a game mode</h2>
-
-          {isHost ? (
-            <div className="space-y-4">
-              <button
-                onClick={async ()=> {
-                  try { playSound('click'); } catch {}
-                  await updateDoc(doc(db, 'sessions', sessionCode), { mode: 'classic', gameState: 'categoryVoting', categoryVotes: {} });
-                  setMpMode('classic');
-                  setGameState('categoryVoting');
-                }}
-                className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-4 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all"
-              >
-                Classic (conversation)
-              </button>
-
-              <button
-                onClick={async ()=> {
-                  if (partyDisabled) return;
-                  try { playSound('click'); } catch {}
-                  await startPartyMode();
-                }}
-                disabled={partyDisabled}
-                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all ${partyDisabled
-                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-400'
-                  : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:shadow-lg'
-                }`}
-              >
-                Party Mode (3+ players)
-              </button>
-              {partyDisabled && <p className="text-sm text-gray-500 dark:text-gray-300">Need at least 3 players for Party Mode.</p>}
-            </div>
-          ) : (
-            <p className="text-gray-500 dark:text-gray-300">Waiting for host to select a mode…</p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // CATEGORY VOTING (Classic)
-  if (gameState === 'categoryVoting') {
-    const recommended = Object.keys(CATEGORIES).slice(0,3); // simple hint
-    const allVotes = Object.values(categoryVotes || {});
-    const totalVotes = allVotes.length;
-    const allPlayersVoted = (players || []).every(p => (categoryVotes || {})[p?.name] && (categoryVotes || {})[p?.name].length > 0);
-    const entries = Object.entries(CATEGORIES || {});
-
-    const CategoryCard = ({ categoryKey, category, isSelected, isRecommended, onClick, disabled = false }) => {
-      const IconComponent =
-        category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-      return (
-        <button
-          onClick={onClick}
-          disabled={disabled}
-          className={`w-full p-4 rounded-xl border-2 transition-all text-left ${
-            isSelected ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/30' : 'border-gray-200 dark:border-gray-600 hover:border-purple-300'
-          } ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-md'}`}
-        >
-          <div className="flex items-start space-x-3">
-            <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'}`}>
-              <IconComponent className="w-4 h-4 text-white" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center space-x-2">
-                <h3 className="font-semibold text-gray-800 dark:text-gray-100">{category?.name || 'Category'}</h3>
-                {isRecommended && (
-                  <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200 px-2 py-1 rounded-full">
-                    Recommended
-                  </span>
-                )}
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">{category?.description || ''}</p>
-            </div>
-          </div>
-        </button>
-      );
-    };
-
-    const handleCategoryVote = async (selectedCats) => {
-      if (!sessionCode) return;
-      const sessionRef = doc(db, 'sessions', sessionCode);
-      const snap = await getDoc(sessionRef);
-      if (!snap.exists()) return;
-      const data = snap.data() || {};
-      const currentVotes = { ...(data.categoryVotes || {}) };
-      currentVotes[playerName] = selectedCats;
-      await updateDoc(sessionRef, { categoryVotes: currentVotes });
-      setMyVotedCategories(selectedCats);
-      setHasVotedCategories(true);
-      try { playSound('success'); vibrate(); } catch {}
-      if ((data.players || []).every(p => (currentVotes[p?.name] || []).length > 0)) {
-        await updateDoc(sessionRef, { gameState: 'waitingForHost' });
-        setGameState('waitingForHost');
-      }
-    };
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6 text-center">
-            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold mb-2">
-              {hasVotedCategories ? 'Waiting for Others' : 'Vote for Categories'}
-            </h2>
-            <p className="text-gray-600 dark:text-gray-300">
-              {hasVotedCategories
-                ? `${totalVotes} of ${players.length} players have voted`
-                : "Select 2–3 categories you'd like to play"}
-            </p>
-            {hasVotedCategories && (
-              <p className="text-sm text-gray-500 dark:text-gray-300 mt-2">Session Code: {sessionCode}</p>
-            )}
-          </div>
-
-          {!hasVotedCategories ? (
-            <>
-              <div className="space-y-3 mb-6">
-                {entries.map(([key, category]) => {
-                  const isRecommended = (recommended || []).includes(key);
-                  const isSelected = (selectedCategories || []).includes(key);
-                  const disabled = !isSelected && (selectedCategories || []).length >= 3;
-                  return (
-                    <CategoryCard
-                      key={key}
-                      categoryKey={key}
-                      category={category}
-                      isSelected={isSelected}
-                      isRecommended={isRecommended}
-                      disabled={disabled}
-                      onClick={() => {
-                        try { playSound('click'); } catch {}
-                        setSelectedCategories((prev) => {
-                          const has = prev.includes(key);
-                          if (has) return prev.filter((c) => c !== key);
-                          if (prev.length >= 3) return prev;
-                          return [...prev, key];
-                        });
-                      }}
-                    />
-                  );
-                })}
-              </div>
-              <button
-                onClick={() => handleCategoryVote(selectedCategories)}
-                disabled={(selectedCategories || []).length === 0}
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Submit My Votes ({(selectedCategories || []).length}/3)
-              </button>
-            </>
-          ) : (
-            <div className="text-center">
-              <div className="mb-4"><ProgressIndicator current={Object.keys(categoryVotes||{}).length} total={players.length} /></div>
-              {isHost ? <p className="text-gray-600 dark:text-gray-300">You can continue once everyone votes.</p> : <p className="text-gray-600 dark:text-gray-300">Waiting for host…</p>}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // WAITING FOR HOST (Classic)
-  if (gameState === 'waitingForHost') {
-    const topCategories = calculateTopCategories(categoryVotes || {});
-    const safeTop = topCategories.length ? topCategories : Object.keys(CATEGORIES).slice(0,4);
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold mb-2">Votes are in!</h2>
-            <p className="text-gray-600 dark:text-gray-300">Top categories:</p>
-          </div>
-
-          <div className="flex flex-wrap gap-2 justify-center mb-6">
-            {safeTop.map((k)=> <CategoryChip key={k} categoryKey={k} />)}
-          </div>
-
-          {isHost ? (
-            <button
-              onClick={async ()=> {
-                try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  selectedCategories: safeTop,
-                  availableCategories: safeTop,
-                  gameState: 'categoryPicking'
-                });
-                setGameState('categoryPicking');
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg"
-            >
-              Start Round 1
-            </button>
-          ) : (
-            <p className="text-gray-500 dark:text-gray-300">Waiting for host to start…</p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // CATEGORY PICKING (Classic)
-  if (gameState === 'categoryPicking') {
-    const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.name === playerName;
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6 text-center">
-            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-            {isMyTurn ? (
-              <>
-                <h2 className="text-2xl font-bold mb-2">Your Turn!</h2>
-                <p className="text-gray-600 dark:text-gray-300">Choose a category</p>
-              </>
-            ) : (
-              <>
-                <h2 className="text-2xl font-bold mb-2">{currentPlayer?.name}'s Turn</h2>
-                <p className="text-gray-600 dark:text-gray-300">{currentPlayer?.name} is choosing a category…</p>
-              </>
-            )}
-          </div>
-
-          {isMyTurn ? (
-            <div className="space-y-3">
-              {(availableCategories || []).map((categoryKey) => {
-                const category = CATEGORIES[categoryKey];
-                const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-                return (
-                  <button
-                    key={categoryKey}
-                    onClick={()=>{ try { playSound('click'); } catch {}; handleCategoryPicked(categoryKey); }}
-                    className="w-full p-4 rounded-xl border-2 text-left transition-all border-gray-200 dark:border-gray-600 hover:border-purple-300"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'}`}>
-                        <IconComponent className="w-4 h-4 text-white" />
-                      </div>
-                      <div>
-                        <div className="font-semibold">{category?.name || categoryKey}</div>
-                        <div className="text-sm text-gray-600 dark:text-gray-300">{category?.description || ''}</div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-center text-gray-600 dark:text-gray-300">Please wait…</div>
-          )}
-
-          {(usedCategories || []).length > 0 && (
-            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-600">
-              <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-2">Used:</h3>
-              <div className="flex flex-wrap gap-2">{usedCategories.map((k)=> <span key={k} className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded-full">{CATEGORIES[k]?.name || k}</span>)}</div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // PLAYING (Classic)
-  if (gameState === 'playing') {
-    const currentCategoryData = CATEGORIES[currentCategory] || null;
-    const IconComponent =
-      currentCategoryData && iconMap[currentCategoryData.icon]
-        ? iconMap[currentCategoryData.icon]
-        : MessageCircle;
-    const currentPlayer = players[currentTurnIndex] || players[0];
-    const isMyTurn = currentPlayer?.name === playerName;
-    const canSkip = skipsUsedThisTurn < maxSkipsPerTurn;
-
-    const round = players.length ? Math.floor((turnHistory.length || 0) / players.length) + 1 : 1;
-    const turn = players.length ? ((turnHistory.length || 0) % players.length) + 1 : 1;
-
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="mb-6 text-center">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 mx-auto mb-4">
-              <IconComponent className="w-6 h-6 text-white" />
-            </div>
-            {currentCategoryData && (
-              <div className="mb-4">
-                <span className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-gradient-to-r ${currentCategoryData.color} text-white text-sm`}>
-                  <IconComponent className="w-3 h-3" />
-                  <span>{currentCategoryData.name}</span>
-                </span>
-              </div>
-            )}
-
-            <h2 className="text-lg font-semibold mb-2">
-              {currentPlayer?.name || 'Player'}'s Question
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">
-              Round {round} • Turn {turn} of {players.length || 1}
-            </p>
-
-            {/* QUESTION ALWAYS VISIBLE */}
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400">
-              <p className="text-lg leading-relaxed">{currentQuestion}</p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {isMyTurn ? (
-              <>
-                <button
-                  onClick={handleSkipQuestion}
-                  disabled={!canSkip}
-                  className={`w-full py-3 px-6 rounded-xl font-semibold text-lg transition-all flex items-center justify-center ${
-                    canSkip
-                      ? 'bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-900/10'
-                      : 'bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 text-gray-400 cursor-not-allowed'
-                  }`}
-                >
-                  <SkipForward className="w-5 h-5 mr-2" />
-                  {canSkip ? 'Skip This Question' : 'Skip Used'}
-                  <span className="ml-2 text-sm">({skipsUsedThisTurn}/{maxSkipsPerTurn})</span>
-                </button>
-
-                <button
-                  onClick={handleNextQuestion}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all"
-                >
-                  Pass to {players.length ? players[(currentTurnIndex + 1) % players.length]?.name : '—'}
-                </button>
-              </>
-            ) : (
-              <div className="text-center text-gray-600 dark:text-gray-300">
-                Waiting for {currentPlayer?.name || 'player'} to finish their turn…
-              </div>
-            )}
-
-            <button
-              onClick={()=> setGameState('waitingRoom')}
-              className="w-full bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold text-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-all"
-            >
-              Back to Lobby
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  /* --------------------------
-     PARTY MODE SCREENS
-  -------------------------- */
-
-  // Leaderboard rail on all party screens
-  const PartyRail = party ? <LeaderboardRail scores={party.scores || {}} /> : null;
-
-  // Party setup (next turn owner starts)
-  if (gameState === 'party_setup' && party) {
-    const turnOwner = players[party.turnIndex]?.name;
-    const iAmTurnOwner = playerName === turnOwner;
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-        {PartyRail}
-        <TopBar />
-        <NotificationToast />
-        <ConfettiCanvas />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold">Party Mode</h2>
-            <Scoreboard scores={party.scores || {}} inline />
-          </div>
-          <p className="text-gray-600 dark:text-gray-300 mb-6">Round {party.round || 1}</p>
-
-          <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-700 mb-4">
-            <p><span className="font-semibold">Turn:</span> {turnOwner}</p>
-          </div>
-
-          {iAmTurnOwner ? (
-            <button
-              onClick={nextTurnOwnerStartPartyRound}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg"
-            >
-              Start the next round
-            </button>
-          ) : (
-            <p className="text-gray-500 dark:text-gray-300 text-center">It’s {turnOwner}’s turn — nothing for you to do yet.</p>
-          )}
-
-          <button
-            onClick={()=> setShowScores(s => !s)}
-            className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
-          >
-            {showScores ? 'Hide' : 'Show'} Scores
-          </button>
-          {showScores && <div className="mt-3"><Scoreboard scores={party.scores || {}} /></div>}
-        </div>
-      </div>
-    );
-  }
-
-  // Active party round (prompt always visible)
-  if (gameState === 'party_active' && party) {
-    const turnOwner = players[party.turnIndex]?.name;
-    const iAmTurnOwner = playerName === turnOwner;
-
-    // ===== Fill-in-the-blank =====
-    if (party.state === 'collect_fill') {
-      const mySubs = (party.submissions?.[playerName] || []);
-      const myDone = !!party.done?.[playerName];
-      const allNonTurn = players.filter(p=>p.name !== turnOwner);
-      const allDone = allNonTurn.length > 0 && allNonTurn.every(p => party.done?.[p.name] || (party.submissions?.[p.name] || []).length > 0);
-
-      const [draft, setDraft] = useState('');
-      useEffect(()=>{ setDraft(''); }, [party.prompt]);
-
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          {PartyRail}
-          <TopBar />
-          <NotificationToast />
-          <ConfettiCanvas />
-          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-2xl font-bold">Fill in the Blank</h2>
-              <Scoreboard scores={party.scores || {}} inline />
-            </div>
-            {/* PROMPT ALWAYS VISIBLE */}
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
-              <p className="font-medium">{party.prompt}</p>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">Turn owner: {turnOwner}</p>
-
-            {!iAmTurnOwner ? (
-              <>
-                <div className="space-y-2 mb-3">
-                  <input
-                    type="text"
-                    value={draft}
-                    onChange={(e)=>setDraft(e.target.value)}
-                    placeholder={mySubs.length >= 2 ? 'You reached 2 answers' : 'Your answer…'}
-                    disabled={mySubs.length >= 2 || myDone}
-                    inputMode="text"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 bg-white dark:bg-gray-900"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onMouseDown={(e)=>e.preventDefault()}
-                      onClick={()=>{ submitFillAnswer(draft); setDraft(''); }}
-                      disabled={mySubs.length >= 2 || myDone || !draft.trim()}
-                      className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-2 rounded-xl font-semibold disabled:opacity-50"
-                    >
-                      Submit
-                    </button>
-                    <button
-                      onMouseDown={(e)=>e.preventDefault()}
-                      onClick={markPhaseDone}
-                      disabled={myDone}
-                      className="px-3 py-2 rounded-xl border-2 border-gray-300 dark:border-gray-600"
-                    >
-                      I’m done
-                    </button>
-                  </div>
-                </div>
-                <div className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-                  Submitted: {(mySubs || []).length} / 2 {myDone && '✓'}
-                </div>
-              </>
-            ) : (
-              <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                Waiting for answers…
-              </div>
-            )}
-
-            {iAmTurnOwner && allDone && (
-              <div className="mt-4">
-                <h3 className="font-semibold mb-2">Pick your favorite</h3>
-                <div className="space-y-2 max-h-60 overflow-auto">
-                  {Object.values(party.submissions || {}).flat().map(a => (
-                    <button
-                      key={a.id}
-                      onClick={()=> pickFillFavorite(a.id)}
-                      className="w-full p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600 text-left hover:border-purple-400"
-                    >
-                      {a.text}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={()=> setShowScores(s => !s)}
-              className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
-            >
-              {showScores ? 'Hide' : 'Show'} Scores
-            </button>
-            {showScores && <div className="mt-3"><Scoreboard scores={party.scores || {}} /></div>}
-          </div>
-        </div>
-      );
-    }
-
-    // ===== Superlatives (everyone picks → submits; turn owner tallies) =====
-    if (party.state === 'vote_super') {
-      const myDone = !!party.done?.[playerName];
-      const everyone = players.map(p => p.name);
-      const doneCount = everyone.filter(n => party.done?.[n]).length;
-      const allSubmitted = doneCount === everyone.length;
-      const iAmTurnOwner = playerName === turnOwner;
-
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          {PartyRail}
-          <TopBar />
-          <NotificationToast />
-          <ConfettiCanvas />
-          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-2xl font-bold">Superlatives</h2>
-              <Scoreboard scores={party.scores || {}} inline />
-            </div>
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
-              <p className="font-medium">{party.prompt}</p>
-            </div>
-
-            <div className="space-y-2">
-              {players.map(p => (
-                <button
-                  key={p.id}
-                  onClick={()=> setSuperChoice(p.name)}
-                  disabled={myDone}
-                  className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
-                    superChoice === p.name
-                      ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                      : 'border-gray-200 dark:border-gray-600 hover:border-purple-300'
-                  } ${myDone ? 'opacity-60 cursor-not-allowed' : ''}`}
-                >
-                  {p.name}
-                </button>
-              ))}
-            </div>
-
-            {!myDone ? (
-              <button
-                onClick={submitSuperVote}
-                disabled={!superChoice}
-                className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-2.5 rounded-xl font-semibold disabled:opacity-50"
-              >
-                Submit Vote
-              </button>
-            ) : (
-              <p className="text-center text-sm text-gray-600 dark:text-gray-300 mt-3">Vote submitted ✓</p>
-            )}
-
-            <div className="mt-4 text-sm text-gray-600 dark:text-gray-300 text-center">
-              Submitted: {doneCount} / {everyone.length}
-            </div>
-
-            {iAmTurnOwner && allSubmitted && (
-              <button
-                onClick={tallySuperVotes}
-                className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-2.5 rounded-xl font-semibold"
-              >
-                Tally & Reveal
-              </button>
-            )}
-
-            <button
-              onClick={()=> setShowScores(s => !s)}
-              className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
-            >
-              {showScores ? 'Hide' : 'Show'} Scores
-            </button>
-            {showScores && <div className="mt-3"><Scoreboard scores={party.scores || {}} /></div>}
-          </div>
-        </div>
-      );
-    }
-
-    // ===== NHI collect =====
-    if (party.state === 'collect_nhi') {
-      const myDone = !!party.done?.[playerName];
-      const others = players.filter(p => p.name !== turnOwner);
-      const allSubmitted = others.length>0 && others.every(p => party.done?.[p.name]);
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          {PartyRail}
-          <TopBar />
-          <NotificationToast />
-          <ConfettiCanvas />
-          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-2xl font-bold">Never Have I Ever</h2>
-              <Scoreboard scores={party.scores || {}} inline />
-            </div>
-            {/* PROMPT ALWAYS VISIBLE */}
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
-              <p className="font-medium">{party.prompt}</p>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">Turn owner: {turnOwner}</p>
-
-            {!iAmTurnOwner ? (
-              <>
-                <div className="flex gap-2">
-                  <button
-                    onClick={()=> setNhiChoice(true)}
-                    disabled={myDone}
-                    className={`flex-1 border-2 py-3 rounded-xl font-semibold ${nhiChoice===true ? 'border-green-500 bg-green-50 dark:bg-green-900/20':'border-gray-300 dark:border-gray-600'}`}
-                  >
-                    I have
-                  </button>
-                  <button
-                    onClick={()=> setNhiChoice(false)}
-                    disabled={myDone}
-                    className={`flex-1 border-2 py-3 rounded-xl font-semibold ${nhiChoice===false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20':'border-gray-300 dark:border-gray-600'}`}
-                  >
-                    I haven’t
-                  </button>
-                </div>
-                {!myDone ? (
-                  <button
-                    onClick={submitNhiAnswer}
-                    disabled={nhiChoice === null}
-                    className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-2.5 rounded-xl font-semibold disabled:opacity-50"
-                  >
-                    Submit
-                  </button>
-                ) : (
-                  <p className="text-center text-sm text-gray-600 dark:text-gray-300 mt-3">Submitted ✓</p>
-                )}
-              </>
-            ) : (
-              <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                Waiting for everyone to submit…
-              </div>
-            )}
-
-            <div className="mt-4 text-sm text-gray-600 dark:text-gray-300">
-              Submitted: {Object.keys(party.done || {}).filter(n=>n!==turnOwner).length} / {players.filter(p=>p.name!==turnOwner).length}
-            </div>
-
-            {iAmTurnOwner && allSubmitted && (
-              <button
-                onClick={moveNhiToGuessing}
-                className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
-              >
-                Start Guessing
-              </button>
-            )}
-
-            <button
-              onClick={()=> setShowScores(s => !s)}
-              className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
-            >
-              {showScores ? 'Hide' : 'Show'} Scores
-            </button>
-            {showScores && <div className="mt-3"><Scoreboard scores={party.scores || {}} /></div>}
-          </div>
-        </div>
-      );
-    }
-
-    // ===== NHI guessing (turn owner guesses everyone) =====
-    if (party.state === 'guessing_nhi') {
-      const [guessMap, setGuessMap] = useState({});
-      const others = players.filter(p => p.name !== turnOwner);
-
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          {PartyRail}
-          <TopBar />
-          <NotificationToast />
-          <ConfettiCanvas />
-          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-2xl font-bold">Never Have I Ever — Guess</h2>
-              <Scoreboard scores={party.scores || {}} inline />
-            </div>
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
-              <p className="font-medium">{party.prompt}</p>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">Turn owner: {turnOwner}</p>
-
-            {iAmTurnOwner ? (
-              <div className="space-y-2">
-                {others.map(p=>(
-                  <div key={p.id} className="flex items-center justify-between p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600">
-                    <span className="font-medium">{p.name}</span>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={()=> setGuessMap(m=>({...m, [p.name]: true}))}
-                        className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.name]===true ? 'border-green-500 bg-green-50 dark:bg-green-900/20':'border-gray-300 dark:border-gray-600'}`}
-                      >Has</button>
-                      <button
-                        onClick={()=> setGuessMap(m=>({...m, [p.name]: false}))}
-                        className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.name]===false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20':'border-gray-300 dark:border-gray-600'}`}
-                      >Hasn’t</button>
-                    </div>
-                  </div>
-                ))}
-                <button
-                  onClick={()=> hostSubmitNhiGuesses(guessMap)}
-                  className="w-full mt-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
-                >
-                  Confirm Guesses
-                </button>
-              </div>
-            ) : (
-              <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                {turnOwner} is guessing…
-              </div>
-            )}
-
-            <button
-              onClick={()=> setShowScores(s => !s)}
-              className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
-            >
-              {showScores ? 'Hide' : 'Show'} Scores
-            </button>
-            {showScores && <div className="mt-3"><Scoreboard scores={party.scores || {}} /></div>}
-          </div>
-        </div>
-      );
-    }
-
-    // ===== Reveal screen (shared)
-    if (party.state === 'reveal') {
-      const nextTurnOwner = players[party.turnIndex]?.name;
-      const iAmNextTurnOwner = playerName === nextTurnOwner;
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
-          {PartyRail}
-          <TopBar />
-          <NotificationToast />
-          <ConfettiCanvas />
-          <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
-            <div className="flex items-center justify-center gap-2 mb-3">
-              <Wand2 className="w-6 h-6 text-purple-500" />
-              <h2 className="text-2xl font-bold">Round Results</h2>
-            </div>
-            {/* PROMPT ALWAYS VISIBLE */}
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4 text-left">
-              <div className="text-sm text-gray-500 dark:text-gray-300 mb-1">Prompt</div>
-              <p className="font-medium">{party.prompt}</p>
-            </div>
-
-            {party.winner ? (
-              <p className="text-lg mb-2"><strong>{party.winner}</strong> gets the point!</p>
-            ) : (
-              <p className="text-lg mb-2">Scores updated.</p>
-            )}
-
-            {(party.lastEvents || []).length > 0 && (
-              <div className="mt-2 text-left text-sm p-3 rounded-xl bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 space-y-1">
-                {(party.lastEvents || []).map((e, i) => <div key={i}>• {e.text}</div>)}
-              </div>
-            )}
-
-            <div className="mt-4"><Scoreboard scores={party.scores || {}} /></div>
-
-            {iAmNextTurnOwner ? (
-              <button
-                onClick={advanceAfterReveal}
-                className="w-full mt-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
-              >
-                Start the next round
-              </button>
-            ) : (
-              <p className="text-gray-500 dark:text-gray-300 mt-6">It’s {nextTurnOwner}’s turn — nothing for you to do yet.</p>
-            )}
-          </div>
-        </div>
-      );
-    }
-  }
-
-  // Fallback
-  return null;
-}
+  const Score
