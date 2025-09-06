@@ -1458,6 +1458,18 @@ export default function Overshare() {
             <h2 className="text-2xl font-bold mb-2">Lobby {sessionCode}</h2>
             <p className="text-gray-600 dark:text-gray-300">Share this code to join</p>
           </div>
+{/* Under the lobby header in the waitingRoom block */}
+<div className="mb-3">
+  <button
+    onClick={async () => {
+      try { await navigator.clipboard.writeText(sessionCode); alert('Session code copied!'); }
+      catch { alert('Could not copy. Long-press / select to copy.'); }
+    }}
+    className="px-3 py-1 text-sm rounded-lg border bg-white/80 dark:bg-gray-800/80"
+  >
+    Copy code
+  </button>
+</div>
 
           <PlayerList players={players} title="Players" />
 
