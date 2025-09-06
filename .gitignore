@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Build artifacts
+dist/
+build/
+
+# Caches
+.turbo/
+.parcel-cache/
+.cache/
+.swc/
+.eslintcache
+.stylelintcache
+coverage/
+
+# Vercel / Firebase
+.vercel/
+.firebase/
+
+# Env files (keep a .env.example tracked)
+.env
+.env.local
+.env.*.local
+
+# macOS / Editors
+.DS_Store
+.vscode/
+.idea/
