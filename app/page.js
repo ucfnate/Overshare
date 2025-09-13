@@ -414,6 +414,26 @@ export default function Overshare() {
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showScores, setShowScores] = useState(false);
+// --- Background themes
+const BG_THEMES = {
+  sunset: 'bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500',
+  ocean:  'bg-gradient-to-br from-sky-600 via-cyan-500 to-emerald-500',
+  dusk:   'bg-gradient-to-br from-indigo-700 via-purple-700 to-fuchsia-600',
+  vapor:  'bg-gradient-to-br from-rose-400 via-fuchsia-500 to-indigo-500',
+  slate:  'bg-gradient-to-br from-slate-700 via-slate-800 to-black',
+  plain:  'bg-gray-100 dark:bg-gray-900', // non-gradient
+};
+
+const [bgTheme, setBgTheme] = useState('sunset');
+const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
+
+// persist choice locally (optional)
+useEffect(() => {
+  try { const saved = localStorage.getItem('bgTheme'); if (saved) setBgTheme(saved); } catch {}
+}, []);
+useEffect(() => {
+  try { localStorage.setItem('bgTheme', bgTheme); } catch {}
+}, [bgTheme]);
 
   /* Refs */
   const unsubscribeRef = useRef(null);
@@ -561,6 +581,21 @@ export default function Overshare() {
     window.clearTimeout((showNotification._t || 0));
     showNotification._t = window.setTimeout(() => setNotification(null), 3000);
   };
+
+  useEffect(() => {
+  if (!sessionCode || !playerName) return;
+
+  const unsub = listenToAlerts(sessionCode, playerName, ({ type, message }) => {
+    // start simple:
+    alert(message);
+
+    // or, use your built-in toast instead of alert:
+    // showNotification(message, type === 'success' ? '✅' : '🔔');
+    try { playSound('success'); } catch {}
+  });
+
+  return () => unsub && unsub();
+}, [sessionCode, playerName]);
 
   /* Questions & prompts */
   const getQuestion = useCallback((categoryKey, exclude = []) => {
@@ -1070,6 +1105,9 @@ export default function Overshare() {
      Topbar / helpers
   ========================= */
   const TopBar = () => (
+const TopBar = () => (
+  <>
+    {/* existing top-right toolbar */}
     <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
       <span
         title={libraryOK ? 'Using external question library' : 'Using built-in fallback questions'}
@@ -1096,7 +1134,45 @@ export default function Overshare() {
         <HelpCircle className="w-5 h-5" />
       </button>
     </div>
+
+    {/* NEW: floating background picker on the left */}
+    <ThemePicker value={bgTheme} onChange={setBgTheme} />
+  </>
+);
+
+function ThemePicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="fixed left-3 top-1/2 -translate-y-1/2 z-50">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="px-3 py-2 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 shadow hover:bg-white"
+        title="Background theme"
+        aria-haspopup="listbox"
+      >
+        🎨
+      </button>
+
+      {open && (
+        <div className="mt-2 w-44 rounded-xl bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 shadow-lg p-2">
+          <label className="block text-xs text-gray-500 dark:text-gray-300 mb-1">Background</label>
+          <select
+            value={value}
+            onChange={(e) => { onChange(e.target.value); setOpen(false); }}
+            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-sm p-2"
+          >
+            <option value="sunset">Sunset</option>
+            <option value="ocean">Ocean</option>
+            <option value="dusk">Dusk</option>
+            <option value="vapor">Vapor</option>
+            <option value="slate">Slate</option>
+            <option value="plain">Plain</option>
+          </select>
+        </div>
+      )}
+    </div>
   );
+}
 
   const HelpModal = () => {
     if (!showHelp) return null;
@@ -1202,6 +1278,7 @@ export default function Overshare() {
   if (gameState === 'welcome') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
         <NotificationToast />
@@ -1240,6 +1317,7 @@ export default function Overshare() {
   if (gameState === 'modeSelect') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
         <NotificationToast />
@@ -1272,6 +1350,7 @@ export default function Overshare() {
     const entries = Object.entries(CATEGORIES || {});
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -1351,6 +1430,7 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -1403,6 +1483,7 @@ export default function Overshare() {
   if (gameState === 'createOrJoin') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
         <NotificationToast />
@@ -1451,6 +1532,7 @@ export default function Overshare() {
     const isNewPlayer = !players.find((p) => p?.name === playerName);
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
@@ -1529,6 +1611,7 @@ export default function Overshare() {
     const partyDisabled = players.length < 3;
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
@@ -1571,6 +1654,15 @@ export default function Overshare() {
               >
                 Return to Lobby
               </button>
+                 <button
+                  onClick={() => {
+                    if (!confirm('Leave the current round and return everyone to the lobby?')) return;
+                    returnToLobby(); // you already have this helper
+                  }}
+                  className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
+                >
+                  Return to Lobby
+                </button>
             </div>
           ) : (
             <p className="text-gray-500 dark:text-gray-300">Waiting for host to select a mode…</p>
@@ -1641,6 +1733,7 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -1712,6 +1805,7 @@ export default function Overshare() {
     const safeTop = topCategories.length ? topCategories : Object.keys(CATEGORIES).slice(0, 4);
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
@@ -1754,6 +1848,7 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -1827,6 +1922,7 @@ export default function Overshare() {
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -1909,6 +2005,7 @@ export default function Overshare() {
     const turnOwner = players[party.turnIndex]?.name;
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>  
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -1963,6 +2060,7 @@ export default function Overshare() {
     if (party.state === 'collect_fill') {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
           <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -2007,6 +2105,7 @@ export default function Overshare() {
     if (party.state === 'vote_super') {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
           <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -2053,6 +2152,7 @@ export default function Overshare() {
       const allSubmitted = others.length > 0 && others.every(p => party.nhiAnswers?.[p.name] !== undefined);
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
           <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -2104,6 +2204,7 @@ export default function Overshare() {
     if (party.state === 'guessing_nhi') {
       return (
         <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
           <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -2149,6 +2250,7 @@ export default function Overshare() {
     const nextOwnerName = players[party.nextTurnIndex]?.name || '—';
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
+      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
