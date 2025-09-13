@@ -42,9 +42,9 @@ import {
 } from '../lib/questionCategories';
 
 // External prompt packs (robust to different export shapes)
-import * as nhieImport from '../nhie.js';
-import * as superImport from '../superlatives.js';
-import * as fillImport from '../fillin.js';
+import * as nhieImport from 'lib/nhie.js';
+import * as superImport from 'lib/superlatives.js';
+import * as fillImport from 'lib/fillin.js';
 
 /* Normalize external arrays if present */
 const EXT_NHI =
