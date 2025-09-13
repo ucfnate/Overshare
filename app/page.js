@@ -1104,7 +1104,6 @@ useEffect(() => {
   /* =========================
      Topbar / helpers
   ========================= */
-  const TopBar = () => (
 const TopBar = () => (
   <>
     {/* existing top-right toolbar */}
@@ -1277,7 +1276,6 @@ function ThemePicker({ value, onChange }) {
   // Welcome
   if (gameState === 'welcome') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
@@ -1316,7 +1314,6 @@ function ThemePicker({ value, onChange }) {
   // Mode select
   if (gameState === 'modeSelect') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
@@ -1349,7 +1346,6 @@ function ThemePicker({ value, onChange }) {
   if (gameState === 'soloSetup') {
     const entries = Object.entries(CATEGORIES || {});
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -1429,7 +1425,6 @@ function ThemePicker({ value, onChange }) {
     };
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -1482,7 +1477,6 @@ function ThemePicker({ value, onChange }) {
   // Create / Join (multiplayer)
   if (gameState === 'createOrJoin') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
@@ -1531,7 +1525,6 @@ function ThemePicker({ value, onChange }) {
   if (gameState === 'waitingRoom') {
     const isNewPlayer = !players.find((p) => p?.name === playerName);
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -1610,7 +1603,6 @@ function ThemePicker({ value, onChange }) {
   if (gameState === 'mpModeSelect') {
     const partyDisabled = players.length < 3;
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -1648,12 +1640,6 @@ function ThemePicker({ value, onChange }) {
               {partyDisabled && <p className="text-sm text-gray-500 dark:text-gray-300">Need at least 3 players for Party Mode.</p>}
 
               {/* Host can bounce back to lobby easily */}
-              <button
-                onClick={returnToLobby}
-                className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
-              >
-                Return to Lobby
-              </button>
                  <button
                   onClick={() => {
                     if (!confirm('Leave the current round and return everyone to the lobby?')) return;
@@ -1732,7 +1718,6 @@ function ThemePicker({ value, onChange }) {
     };
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -1804,7 +1789,6 @@ function ThemePicker({ value, onChange }) {
     const topCategories = calculateTopCategories(categoryVotes || {});
     const safeTop = topCategories.length ? topCategories : Object.keys(CATEGORIES).slice(0, 4);
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -1847,7 +1831,6 @@ function ThemePicker({ value, onChange }) {
     const isMyTurn = currentPlayer?.name === playerName;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -1921,7 +1904,6 @@ function ThemePicker({ value, onChange }) {
     const turn = players.length ? ((turnHistory.length || 0) % players.length) + 1 : 1;
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
@@ -2004,7 +1986,6 @@ function ThemePicker({ value, onChange }) {
   if (gameState === 'party_setup' && party) {
     const turnOwner = players[party.turnIndex]?.name;
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>  
         <TopBar />
         <NotificationToast />
@@ -2059,7 +2040,6 @@ function ThemePicker({ value, onChange }) {
     // Fill
     if (party.state === 'collect_fill') {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
@@ -2104,7 +2084,6 @@ function ThemePicker({ value, onChange }) {
     // Superlatives
     if (party.state === 'vote_super') {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
@@ -2151,7 +2130,6 @@ function ThemePicker({ value, onChange }) {
       const others = players.filter(p => p.name !== turnOwner);
       const allSubmitted = others.length > 0 && others.every(p => party.nhiAnswers?.[p.name] !== undefined);
       return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
@@ -2203,7 +2181,6 @@ function ThemePicker({ value, onChange }) {
     // NHI guessing
     if (party.state === 'guessing_nhi') {
       return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
         <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
           <NotificationToast />
@@ -2249,7 +2226,6 @@ function ThemePicker({ value, onChange }) {
     const iAmNextOwner = players[party.nextTurnIndex]?.name === playerName;
     const nextOwnerName = players[party.nextTurnIndex]?.name || '—';
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500 flex items-center justify-center p-4">
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
