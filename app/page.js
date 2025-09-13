@@ -24,7 +24,7 @@ import {
   Wand2
 } from 'lucide-react';
 
-import { db, listenToAlerts } from '../lib/firebase';
+import { db, listenToAlerts, pushAlert } from '../lib/firebase';
 import {
   doc,
   setDoc,
@@ -35,10 +35,32 @@ import {
   arrayUnion
 } from 'firebase/firestore';
 
+// Question library (unchanged)
 import {
   questionCategories as qcImport,
   getRandomQuestion as getRandomQImport
 } from '../lib/questionCategories';
+
+// External prompt packs (robust to different export shapes)
+import * as nhieImport from '../nhie';
+import * as superImport from '../superlatives';
+import * as fillImport from '../fillin';
+
+/* Normalize external arrays if present */
+const EXT_NHI =
+  Array.isArray(nhieImport?.default) ? nhieImport.default :
+  Array.isArray(nhieImport?.NHIE) ? nhieImport.NHIE :
+  Array.isArray(nhieImport?.nhie) ? nhieImport.nhie : [];
+
+const EXT_SUPER =
+  Array.isArray(superImport?.default) ? superImport.default :
+  Array.isArray(superImport?.SUPERLATIVES) ? superImport.SUPERLATIVES :
+  Array.isArray(superImport?.superlatives) ? superImport.superlatives : [];
+
+const EXT_FILL =
+  Array.isArray(fillImport?.default) ? fillImport.default :
+  Array.isArray(fillImport?.FILLIN) ? fillImport.FILLIN :
+  Array.isArray(fillImport?.fillin) ? fillImport.fillin : [];
 
 /* =========================================================
    Small shared UI
@@ -89,10 +111,11 @@ const Scoreboard = ({ scores = {}, inline = false }) => {
 };
 
 /* =========================================================
-   Party child components (avoid conditional hooks in parent)
+   Party child components
+   (separate to avoid conditional hooks in parent)
 ========================================================= */
 
-// --- Fill in the Blank: submission screen for non-turn players + pick favorite for turn owner
+// --- Fill in the Blank
 function FillCollectView({
   party,
   players,
@@ -101,7 +124,7 @@ function FillCollectView({
   isTurnOwner,
   onSubmitAnswer,
   onMarkDone,
-  onPickFavorite
+  onPickFavorite,
 }) {
   const [draft, setDraft] = useState('');
   useEffect(() => { setDraft(''); }, [party?.prompt]);
@@ -179,11 +202,10 @@ function FillCollectView({
   );
 }
 
-// --- Superlatives: choose & submit a vote (two-step to avoid “game stops”)
+// --- Superlatives: choose & submit a vote
 function SuperVoteView({ party, players, playerName, onSubmitVote }) {
   const [choice, setChoice] = useState(party?.votes?.[playerName] || '');
-  useEffect(() => setChoice(party?.votes?.[playerName] || ''), [party?.prompt, party?.tiebreak]);
-
+  useEffect(() => { setChoice(party?.votes?.[playerName] || ''); }, [party?.prompt, party?.tiebreak]);
   const myVoteSubmitted = !!party?.votes?.[playerName];
 
   return (
@@ -225,14 +247,14 @@ function SuperVoteView({ party, players, playerName, onSubmitVote }) {
   );
 }
 
-// --- Never Have I Ever: pick (highlight) then submit
+// --- NHI: collect answers (non-turn players)
 function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, onSubmitMyAnswer }) {
   const [local, setLocal] = useState(null);
   const myAnsOnServer = party?.nhiAnswers?.[playerName];
   const others = (players || []).filter(p => p.name !== turnOwner);
   const allSubmitted = others.length > 0 && others.every(p => party?.nhiAnswers?.[p.name] !== undefined);
 
-  useEffect(() => setLocal(null), [party?.prompt]);
+  useEffect(() => { setLocal(null); }, [party?.prompt]);
 
   return (
     <>
@@ -249,7 +271,9 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
               onClick={() => setLocal(true)}
               disabled={myAnsOnServer !== undefined}
               className={`flex-1 border-2 py-3 rounded-xl font-semibold ${
-                local === true ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-300 dark:border-gray-600'
+                local === true
+                  ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                  : 'border-gray-300 dark:border-gray-600'
               } ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               I have
@@ -258,7 +282,9 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
               onClick={() => setLocal(false)}
               disabled={myAnsOnServer !== undefined}
               className={`flex-1 border-2 py-3 rounded-xl font-semibold ${
-                local === false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600'
+                local === false
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-gray-300 dark:border-gray-600'
               } ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               I haven’t
@@ -269,7 +295,7 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
             <button
               onClick={() => { if (local !== null) onSubmitMyAnswer(local); }}
               disabled={local === null}
-              className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
+              className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold disabled:opacity-50"
             >
               Submit
             </button>
@@ -294,7 +320,7 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
   );
 }
 
-// --- NHI guessing: only turn owner chooses Has/Hasn’t for each player, then confirm
+// --- NHI guessing (turn owner)
 function NhiGuessView({ party, players, playerName, turnOwner, isTurnOwner, onConfirmGuesses }) {
   const [guessMap, setGuessMap] = useState({});
   const others = (players || []).filter(p => p.name !== turnOwner);
@@ -347,9 +373,7 @@ function NhiGuessView({ party, players, playerName, turnOwner, isTurnOwner, onCo
    Main Component
 ========================================================= */
 export default function Overshare() {
-  /* =========================
-     State
-  ========================= */
+  /* State */
   const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
@@ -373,7 +397,7 @@ export default function Overshare() {
   const [hasVotedCategories, setHasVotedCategories] = useState(false);
 
   // Party session blob
-  const [party, setParty] = useState(null); // { state, type, prompt, round, turnIndex, submissions, done, votes, nhiAnswers, guesses, scores, winner, tiebreak, nextTurnIndex }
+  const [party, setParty] = useState(null); // { state, type, prompt, round, turnIndex, submissions, done, votes, nhiAnswers, guesses, scores, winner, tiebreak, nextTurnIndex, used }
 
   // Solo
   const [soloCategories, setSoloCategories] = useState([]);
@@ -387,32 +411,46 @@ export default function Overshare() {
   const [showHelp, setShowHelp] = useState(false);
   const [showScores, setShowScores] = useState(false);
 
-  // --- Background themes (persisted locally)
+  // Solo skip limiter
+  const [soloSkipsUsed, setSoloSkipsUsed] = useState(0);
+  const maxSoloSkips = 3;
+
+  // Background themes
   const BG_THEMES = {
     sunset: 'bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500',
     ocean:  'bg-gradient-to-br from-sky-600 via-cyan-500 to-emerald-500',
     dusk:   'bg-gradient-to-br from-indigo-700 via-purple-700 to-fuchsia-600',
     vapor:  'bg-gradient-to-br from-rose-400 via-fuchsia-500 to-indigo-500',
     slate:  'bg-gradient-to-br from-slate-700 via-slate-800 to-black',
-    plain:  'bg-gray-100 dark:bg-gray-900', // non-gradient
+    plain:  'bg-gray-100 dark:bg-gray-900',
   };
   const [bgTheme, setBgTheme] = useState('sunset');
   const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
-  // load saved theme on mount
+
   useEffect(() => { try { const saved = localStorage.getItem('bgTheme'); if (saved) setBgTheme(saved); } catch {} }, []);
-  // save theme when it changes
   useEffect(() => { try { localStorage.setItem('bgTheme', bgTheme); } catch {} }, [bgTheme]);
 
-  /* =========================
-     Refs
-  ========================= */
+  // One-time party intro
+  const [showPartyIntro, setShowPartyIntro] = useState(false);
+  useEffect(() => {
+    if (gameState === 'party_setup') {
+      try {
+        const seen = localStorage.getItem('partyIntroSeen');
+        setShowPartyIntro(!seen);
+      } catch {
+        setShowPartyIntro(true);
+      }
+    } else {
+      setShowPartyIntro(false);
+    }
+  }, [gameState]);
+
+  /* Refs */
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
 
-  /* =========================
-     Icons + Categories (library or fallback)
-  ========================= */
+  /* Category library */
   const iconMap = useMemo(
     () => ({ Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle }),
     []
@@ -491,9 +529,7 @@ export default function Overshare() {
     return typeof getRandomQImport === 'function' && !usingFallback;
   }, [CATEGORIES, FALLBACK_CATEGORIES]);
 
-  /* =========================
-     Audio + notifications
-  ========================= */
+  /* Audio + notifications */
   const getAudio = () => {
     if (!audioEnabled) return null;
     try {
@@ -503,7 +539,9 @@ export default function Overshare() {
         audioCtxRef.current = new Ctx();
       }
       return audioCtxRef.current;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   };
 
   const playSound = (type) => {
@@ -554,24 +592,104 @@ export default function Overshare() {
     showNotification._t = window.setTimeout(() => setNotification(null), 3000);
   };
 
-  /* =========================
-     Alerts listener (per-player toasts)
-  ========================= */
+  // Alerts listener (toast + sound)
   useEffect(() => {
     if (!sessionCode || !playerName) return;
-
     const unsub = listenToAlerts(sessionCode, playerName, ({ type, message }) => {
-      // Use the shared toast so it looks consistent everywhere
       showNotification(message, type === 'success' ? '✅' : '🔔');
       try { playSound('success'); } catch {}
     });
-
     return () => unsub && unsub();
   }, [sessionCode, playerName]);
 
-  /* =========================
-     Questions & prompts
-  ========================= */
+  /* Prompt sources (external-first, with fallbacks), + remote-friendly filter */
+  const BASE_SUPERLATIVES = useMemo(() => (EXT_SUPER.length ? EXT_SUPER : [
+    'Most likely to survive a zombie apocalypse',
+    'Most likely to forget why they walked into a room',
+    'Most likely to go viral accidentally',
+    'Best unintentional comedian',
+    'Most likely to befriend their barista',
+    'Best chaotic good energy',
+    'Most likely to bring snacks to everything',
+    'Most likely to start a group chat argument',
+    'Most likely to wear sunglasses indoors',
+    'Most likely to have a secret second life',
+  ]), []);
+  const BASE_FILL_PROMPTS = useMemo(() => (EXT_FILL.length ? EXT_FILL : [
+    'Write the worst possible movie tagline for a rom-com.',
+    'Give a fake but convincing “fun fact” about a common object.',
+    'Invent a new holiday and one cursed tradition.',
+    'Name a brand-new dating app and its unhinged slogan.',
+    'Give a brutal but fair nickname for the person on your left.',
+    'Write a two-word horror story.',
+  ]), []);
+  const BASE_NHI_PROMPTS = useMemo(() => (EXT_NHI.length ? EXT_NHI : [
+    'Never have I ever eaten an entire pizza alone.',
+    'Never have I ever lied to get out of plans.',
+    'Never have I ever stalked an ex on social media.',
+    'Never have I ever laughed at the wrong moment.',
+    'Never have I ever sent a text to the wrong person.',
+    'Never have I ever fallen asleep on a video call.',
+  ]), []);
+
+  // More built-in variety if your external lists are short
+  const SUPERLATIVES = useMemo(() => [
+    ...BASE_SUPERLATIVES,
+    'Most likely to talk to plants',
+    'Most likely to have a burner Instagram for their dog',
+    'Most likely to become a meme',
+    'Most likely to start a podcast',
+    'Most likely to win a staring contest with a cat',
+    'Most likely to clap when the plane lands',
+    'Most likely to become a local celebrity',
+    'Most likely to take over the group chat with voice notes'
+  ], [BASE_SUPERLATIVES]);
+
+  const FILL_PROMPTS = useMemo(() => [
+    ...BASE_FILL_PROMPTS,
+    'Describe the world’s most chaotic roommate in 7 words.',
+    'Rename a household item like it’s luxury branding.',
+    'Pitch a new emoji and what it means.',
+    'Write a restaurant review for a gas station snack.',
+    'Invent a conspiracy theory that’s oddly wholesome.',
+    'Create a new sport and its only rule.',
+    'Give a TED talk title for something silly you’re great at.',
+    'Write an inspirational quote that falls apart at the end.',
+    'Write a passive-aggressive note to your future self.',
+    'Summarize a blockbuster in five brutally honest words.'
+  ], [BASE_FILL_PROMPTS]);
+
+  const NHI_PROMPTS = useMemo(() => [
+    ...BASE_NHI_PROMPTS,
+    'Never have I ever rage-quit a group chat.',
+    'Never have I ever pretended to lose Wi-Fi on a call.',
+    'Never have I ever posted and deleted within 1 minute.',
+    'Never have I ever rehearsed an argument in the shower.',
+    'Never have I ever used an ex’s streaming account.',
+    'Never have I ever joined a meeting from bed.'
+  ], [BASE_NHI_PROMPTS]);
+
+  const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  // Remote-friendly filter (avoid “left/right” style in-person prompts)
+  const isRemoteFriendly = (s = '') =>
+    !/\b(to\s+(your|my)\s+(left|right)|on\s+(your|my)\s+(left|right)|\bthe\s+(left|right)\b|\bleft\b|\bright\b)/i.test(s);
+
+  // Helper to pick a unique, remote-friendly prompt by game type against party.used
+  const pickPrompt = (type, usedObj) => {
+    const src = type === 'fill' ? FILL_PROMPTS : type === 'super' ? SUPERLATIVES : NHI_PROMPTS;
+    const pool = (src || []).filter(isRemoteFriendly);
+    const used = new Set((usedObj && usedObj[type]) || []);
+    if (pool.length === 0) return 'New prompt coming soon…';
+    let choice = null;
+    for (let i = 0; i < 64; i++) {
+      const c = pool[(Math.random() * pool.length) | 0];
+      if (!used.has(c)) { choice = c; break; }
+    }
+    return choice || pool[0];
+  };
+
+  /* Questions & prompts (classic) */
   const getQuestion = useCallback((categoryKey, exclude = []) => {
     if (typeof getRandomQImport === 'function') {
       try {
@@ -592,42 +710,7 @@ export default function Overshare() {
     return q;
   }, [CATEGORIES]);
 
-  const SUPERLATIVES = useMemo(() => [
-    'Most likely to survive a zombie apocalypse',
-    'Most likely to forget why they walked into a room',
-    'Most likely to go viral accidentally',
-    'Best unintentional comedian',
-    'Most likely to befriend their barista',
-    'Best chaotic good energy',
-    'Most likely to bring snacks to everything',
-    'Most likely to start a group chat argument',
-    'Most likely to wear sunglasses indoors',
-    'Most likely to have a secret second life'
-  ], []);
-
-  const FILL_PROMPTS = useMemo(() => [
-    'Write the worst possible movie tagline for a rom-com.',
-    'Give a fake but convincing “fun fact” about a common object.',
-    'Invent a new holiday and one cursed tradition.',
-    'Name a brand-new dating app and its unhinged slogan.',
-    'Give a brutal but fair nickname for the person on your left.',
-    'Write a two-word horror story.'
-  ], []);
-
-  const NHI_PROMPTS = useMemo(() => [
-    'Never have I ever eaten an entire pizza alone.',
-    'Never have I ever lied to get out of plans.',
-    'Never have I ever stalked an ex on social media.',
-    'Never have I ever laughed at the wrong moment.',
-    'Never have I ever sent a text to the wrong person.',
-    'Never have I ever fallen asleep on a video call.'
-  ], []);
-
-  const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-  /* =========================================================
-     Firestore: session helpers
-  ========================================================= */
+  /* Firestore: session helpers */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
@@ -681,7 +764,12 @@ export default function Overshare() {
         prevCount = newCount;
 
         setPlayers([...(data.players || [])]);
-        setSelectedCategories([...(data.selectedCategories || [])]);
+
+        // 🔒 Do NOT clobber local selections during category voting
+        if ((data.gameState || '') !== 'categoryVoting') {
+          setSelectedCategories([...(data.selectedCategories || [])]);
+        }
+
         setCurrentTurnIndex(typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0);
         setCurrentQuestion(data.currentQuestion || '');
         setCurrentCategory(data.currentCategory || '');
@@ -723,9 +811,7 @@ export default function Overshare() {
     };
   }, []);
 
-  /* =========================================================
-     Create / Join / Return
-  ========================================================= */
+  /* Create / Join / Return */
   const handleCreateSession = async () => {
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const hostPlayer = {
@@ -779,9 +865,7 @@ export default function Overshare() {
     setGameState('waitingRoom');
   };
 
-  /* =========================================================
-     Classic helpers
-  ========================================================= */
+  /* Classic helpers */
   const calculateTopCategories = (votes) => {
     const counts = {};
     Object.values(votes || {}).forEach(arr => (arr || []).forEach(cat => {
@@ -852,17 +936,12 @@ export default function Overshare() {
     try { playSound('turn'); } catch {}
   };
 
-  /* =========================================================
-     Party helpers
-  ========================================================= */
-
-  const partyChooseTypeAndPrompt = (roundNum) => {
-    const mod = ((roundNum || 1) - 1) % 3; // 1: fill, 2: super, 3: nhi
+  /* Party helpers */
+  const partyChooseTypeAndPrompt = (roundNum, used) => {
+    const mod = ((roundNum || 1) - 1) % 3; // 0: fill, 1: super, 2: nhi
     const type = mod === 0 ? 'fill' : mod === 1 ? 'super' : 'nhi';
-    return {
-      type,
-      prompt: type === 'fill' ? randomOf(FILL_PROMPTS) : type === 'super' ? randomOf(SUPERLATIVES) : randomOf(NHI_PROMPTS),
-    };
+    const prompt = pickPrompt(type, used);
+    return { type, prompt };
   };
 
   const startPartyMode = async () => {
@@ -872,7 +951,7 @@ export default function Overshare() {
       gameState: 'party_setup',
       currentTurnIndex: 0,
       party: {
-        state: 'setup', // setup → collect_fill | vote_super | collect_nhi | guessing_nhi → reveal → wait_next
+        state: 'setup', // setup → collect_fill | vote_super | collect_nhi | guessing_nhi → reveal
         type: null,
         prompt: '',
         round: 1,
@@ -886,6 +965,7 @@ export default function Overshare() {
         winner: null,
         tiebreak: 0,
         nextTurnIndex: 0,
+        used: { fill: [], super: [], nhi: [] },
       }
     });
     setMpMode('party');
@@ -894,7 +974,9 @@ export default function Overshare() {
   const hostStartPartyRound = async () => {
     if (!sessionCode || !party) return;
     const round = party.round || 1;
-    const { type, prompt } = partyChooseTypeAndPrompt(round);
+    const used = { ...(party.used || { fill: [], super: [], nhi: [] }) };
+    const { type, prompt } = partyChooseTypeAndPrompt(round, used);
+    used[type] = [...new Set([...(used[type] || []), prompt])];
     const next = {
       ...party,
       state: type === 'fill' ? 'collect_fill' : type === 'super' ? 'vote_super' : 'collect_nhi',
@@ -907,6 +989,7 @@ export default function Overshare() {
       guesses: {},
       winner: null,
       tiebreak: type === 'super' ? (party.tiebreak || 0) : 0,
+      used,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next, gameState: 'party_active' });
   };
@@ -917,7 +1000,9 @@ export default function Overshare() {
     const iAmNext = players[party.nextTurnIndex]?.name === playerName;
     if (!iAmNext) return;
     const round = party.round || 2; // already incremented in reveal
-    const { type, prompt } = partyChooseTypeAndPrompt(round);
+    const used = { ...(party.used || { fill: [], super: [], nhi: [] }) };
+    const { type, prompt } = partyChooseTypeAndPrompt(round, used);
+    used[type] = [...new Set([...(used[type] || []), prompt])];
     const next = {
       ...party,
       state: type === 'fill' ? 'collect_fill' : type === 'super' ? 'vote_super' : 'collect_nhi',
@@ -931,6 +1016,7 @@ export default function Overshare() {
       winner: null,
       tiebreak: type === 'super' ? (party.tiebreak || 0) : 0,
       turnIndex: party.nextTurnIndex,
+      used,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), {
       party: next,
@@ -963,7 +1049,7 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.done': done });
   };
 
-  // Fill: pick favorite → reveal, winner goes next
+  // Fill: host pick favorite → reveal, winner goes next + alert
   const hostPickFavorite = async (answerId) => {
     if (!sessionCode || !party) return;
     const all = Object.values(party.submissions || {}).flat();
@@ -985,6 +1071,7 @@ export default function Overshare() {
     };
 
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
+    try { await pushAlert(sessionCode, picked.by, '🎉 Your answer was picked! +1', 'success'); } catch {}
   };
 
   // Superlatives: submit vote, tally when all in (auto), or tiebreak
@@ -993,7 +1080,7 @@ export default function Overshare() {
     const votes = { ...(party.votes || {}), [playerName]: voteForName };
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.votes': votes });
 
-    // If everyone voted, tally on whoever’s client hits last; idempotent writes keep us safe
+    // If everyone voted, tally
     const everyoneVoted = players.length > 0 && players.every(p => votes[p.name]);
     if (everyoneVoted) {
       const tally = {};
@@ -1005,12 +1092,17 @@ export default function Overshare() {
       const tied = sorted.filter(([_, c]) => c === topCount).map(([n]) => n);
 
       if (tied.length > 1) {
+        // new superlative prompt, unique & remote-friendly
+        const used = { ...(party.used || { fill: [], super: [], nhi: [] }) };
+        const newPrompt = pickPrompt('super', used);
+        used.super = [...new Set([...(used.super || []), newPrompt])];
         const next = {
           ...party,
-          prompt: randomOf(SUPERLATIVES),
+          prompt: newPrompt,
           votes: {},
           tiebreak: (party.tiebreak || 0) + 1,
-          state: 'vote_super'
+          state: 'vote_super',
+          used,
         };
         await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
       } else {
@@ -1027,11 +1119,12 @@ export default function Overshare() {
           round: (party.round || 1) + 1
         };
         await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
+        try { await pushAlert(sessionCode, winner, '🏆 You won the round! +1', 'success'); } catch {}
       }
     }
   };
 
-  // NHI: non-turn answer submission (two-step in UI)
+  // NHI: non-turn answer submission
   const submitNhiAnswer = async (hasDone) => {
     if (!sessionCode || !party) return;
     const me = playerName;
@@ -1048,7 +1141,7 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
   };
 
-  // NHI: confirm guesses; host points + player points; next is sequential
+  // NHI: confirm guesses; host points + per-player points; next is sequential + alerts
   const hostSubmitNhiGuesses = async (guessesMap) => {
     if (!sessionCode || !party) return;
     const actual = party.nhiAnswers || {};
@@ -1080,11 +1173,60 @@ export default function Overshare() {
       round: (party.round || 1) + 1
     };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
+
+    // Alerts
+    try {
+      if (owner && hostPoints > 0) {
+        await pushAlert(sessionCode, owner, `🧠 You guessed ${hostPoints} correctly (+${hostPoints})`, 'success');
+      }
+      await Promise.all(Object.entries(actual).map(async ([name, has]) => {
+        const guess = guessesMap[name];
+        const correct = guess !== undefined && ((guess && has) || (!guess && !has));
+        if (correct) {
+          await pushAlert(sessionCode, name, `✨ ${owner || 'Host'} guessed you ${has ? 'have' : "haven't"} — +1`, 'success');
+        }
+      }));
+    } catch {}
   };
 
   /* =========================
-     Topbar / Theme picker / Helpers
+     Topbar / helpers
   ========================= */
+  const TopBar = () => (
+    <>
+      {/* existing top-right toolbar */}
+      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+        <span
+          title={libraryOK ? 'Using external question library' : 'Using built-in fallback questions'}
+          className={`hidden sm:inline-flex px-2 py-1 rounded-lg text-xs font-medium ${libraryOK ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}
+        >
+          {libraryOK ? 'Library' : 'Fallback'}
+        </span>
+
+        <button
+          onClick={() => { setAudioEnabled(v => !v); try { playSound('click'); } catch {} }}
+          className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
+          aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
+          title={audioEnabled ? 'Sound: on' : 'Sound: off'}
+        >
+          {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+        </button>
+
+        <button
+          onClick={() => setShowHelp(true)}
+          className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
+          aria-label="Help"
+          title="Help"
+        >
+          <HelpCircle className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Floating background picker */}
+      <ThemePicker value={bgTheme} onChange={setBgTheme} />
+    </>
+  );
+
   function ThemePicker({ value, onChange }) {
     const [open, setOpen] = useState(false);
     return (
@@ -1119,115 +1261,101 @@ export default function Overshare() {
     );
   }
 
-  const TopBar = () => (
-    <>
-      {/* existing top-right toolbar */}
-      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-        <span
-          title={libraryOK ? 'Using external question library' : 'Using built-in fallback questions'}
-          className={`hidden sm:inline-flex px-2 py-1 rounded-lg text-xs font-medium ${libraryOK ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}
-        >
-          {libraryOK ? 'Library' : 'Fallback'}
-        </span>
-
-        <button
-          onClick={() => { setAudioEnabled(v => !v); try { playSound('click'); } catch {} }}
-          className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
-          aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
-          title={audioEnabled ? 'Sound: on' : 'Sound: off'}
-        >
-          {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-        </button>
-
-        <button
-          onClick={() => setShowHelp(true)}
-          className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
-          aria-label="Help"
-          title="Help"
-        >
-          <HelpCircle className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* NEW: floating background picker on the left */}
-      <ThemePicker value={bgTheme} onChange={setBgTheme} />
-    </>
-  );
-// --- Inline UI bits used across screens (place above "Screens")
-const NotificationToast = () => {
-  if (!notification) return null;
-  return (
-    <div className="fixed inset-x-0 bottom-6 z-50 flex justify-center">
-      <div className="flex items-center gap-2 bg-black/80 text-white px-4 py-2 rounded-full shadow">
-        <span className="text-lg">{notification.emoji}</span>
-        <span className="text-sm">{notification.message}</span>
-        <button
-          onClick={() => setNotification(null)}
-          className="ml-1 opacity-70 hover:opacity-100"
-          aria-label="Close"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const HelpModal = () => {
-  if (!showHelp) return null;
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 max-w-lg w-full">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-lg font-semibold">How to play</h3>
+  const HelpModal = () => {
+    if (!showHelp) return null;
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        onClick={(e) => { if (e.target === e.currentTarget) setShowHelp(false); }}
+      >
+        <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-2xl p-6 relative">
           <button
+            className="absolute top-3 right-3 text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100"
             onClick={() => setShowHelp(false)}
-            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-            aria-label="Close"
+            aria-label="Close help"
           >
             <X className="w-5 h-5" />
           </button>
+
+          <div className="flex items-center gap-3 mb-4">
+            <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500">
+              <MessageCircle className="w-5 h-5 text-white" />
+            </div>
+            <h3 className="text-xl font-semibold">How to Play Overshare</h3>
+          </div>
+
+          <div className="space-y-3 text-gray-700 dark:text-gray-200">
+            <p>Pick Solo for a quick, one-device game; pick Multiplayer to host or join a lobby.</p>
+            <p>Classic = conversation rounds by category. Party = Fill-in-the-Blank, Superlatives, and Never Have I Ever with scoring.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-300">Pro tip: the more you share, the better the stories get.</p>
+          </div>
+
+          <div className="mt-6 border-t border-gray-200 dark:border-gray-600 pt-4 flex items-center justify-between">
+            <span className="text-sm text-gray-500 dark:text-gray-300">Enjoying the game?</span>
+            <a
+              href="https://venmo.com/ucfnate"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white text-sm font-medium hover:shadow-md"
+            >
+              💜 Donate
+            </a>
+          </div>
         </div>
-        <ul className="text-sm text-gray-600 dark:text-gray-300 list-disc pl-5 space-y-1">
-          <li>Pick Solo or Multiplayer.</li>
-          <li>In Classic, vote categories → take turns answering prompts.</li>
-          <li>In Party, follow the on-screen steps for each mini-game.</li>
-          <li>Use the left 🎨 button to change background theme.</li>
-        </ul>
+      </div>
+    );
+  };
+
+  const NotificationToast = () => {
+    if (!notification) return null;
+    return (
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl shadow-lg p-4 z-50">
+        <div className="flex items-center space-x-2">
+          <span className="text-2xl">{notification.emoji}</span>
+          <span className="font-medium text-gray-800 dark:text-gray-100">{notification.message}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const CategoryChip = ({ categoryKey }) => {
+    const category = CATEGORIES[categoryKey];
+    const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
+    return (
+      <div className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'} text-white text-sm`}>
+        <IconComponent className="w-4 h-4" />
+        <span>{category?.name || categoryKey}</span>
+      </div>
+    );
+  };
+
+  const PlayerList = ({ players: list, title, showCheck = false, highlight = null }) => (
+    <div className="mb-6">
+      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">
+        {title} ({(list || []).length})
+      </h3>
+      <div className="space-y-2">
+        {(list || []).map((p, i) => (
+          <div
+            key={`${p?.id || 'p'}-${i}`}
+            className={`flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-xl ${
+              highlight === p?.name ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-900/30' : ''
+            }`}
+          >
+            <span className="font-medium">{p?.name || 'Player'}</span>
+            <div className="flex items-center gap-2">
+              {p?.isHost && (
+                <span className="text-xs bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-200 px-2 py-1 rounded-full">
+                  Host
+                </span>
+              )}
+              {showCheck && (<CheckCircle2 className="w-4 h-4 text-green-500" />)}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
-};
-
-const PlayerList = ({ players = [], title = 'Players' }) => (
-  <div className="text-left mb-4">
-    <h3 className="font-semibold mb-2">{title}</h3>
-    <ul className="space-y-2">
-      {players.map((p) => (
-        <li
-          key={p.id}
-          className="flex items-center justify-between p-2 rounded-xl border border-gray-200 dark:border-gray-700"
-        >
-          <span>{p.name}</span>
-          {p.isHost && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200">
-              Host
-            </span>
-          )}
-        </li>
-      ))}
-    </ul>
-  </div>
-);
-
-const CategoryChip = ({ categoryKey }) => {
-  const cat = CATEGORIES[categoryKey];
-  return (
-    <span className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700">
-      {cat?.name || categoryKey}
-    </span>
-  );
-};
 
   /* =========================
      Screens
@@ -1351,6 +1479,7 @@ const CategoryChip = ({ categoryKey }) => {
               setCurrentCategory(firstCat);
               setCurrentQuestion(q);
               setSoloAsked([q]);
+              setSoloSkipsUsed(0);
             }}
             disabled={soloCategories.length === 0}
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50"
@@ -1376,11 +1505,17 @@ const CategoryChip = ({ categoryKey }) => {
       setCurrentCategory(key);
       setCurrentQuestion(q);
       setSoloAsked((prev) => [...prev, q]);
+      setSoloSkipsUsed(0);
     };
     const skipSolo = () => {
+      if (soloSkipsUsed >= maxSoloSkips) {
+        showNotification(`Skip limit reached (${maxSoloSkips})`, '⏭️');
+        return;
+      }
       const q = getQuestion(currentCategory, soloAsked);
       setCurrentQuestion(q);
       setSoloAsked((prev) => [...prev, q]);
+      setSoloSkipsUsed((n) => n + 1);
       try { playSound('click'); } catch {}
     };
 
@@ -1413,7 +1548,7 @@ const CategoryChip = ({ categoryKey }) => {
               onClick={skipSolo}
               className="flex-1 bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 py-3 px-6 rounded-xl font-semibold hover:bg-orange-50 dark:hover:bg-orange-900/10"
             >
-              Skip
+              Skip ({soloSkipsUsed}/{maxSoloSkips})
             </button>
             <button
               onClick={() => { const q = getQuestion(currentCategory, soloAsked); setSoloAsked(p => [...p, q]); setCurrentQuestion(q); try { playSound('turn'); } catch {} }}
@@ -1494,11 +1629,10 @@ const CategoryChip = ({ categoryKey }) => {
             <p className="text-gray-600 dark:text-gray-300">Share this code to join</p>
           </div>
 
-          {/* Copy session code */}
           <div className="mb-3">
             <button
               onClick={async () => {
-                try { await navigator.clipboard.writeText(sessionCode); showNotification('Session code copied!', '📋'); }
+                try { await navigator.clipboard.writeText(sessionCode); alert('Session code copied!'); }
                 catch { alert('Could not copy. Long-press / select to copy.'); }
               }}
               className="px-3 py-1 text-sm rounded-lg border bg-white/80 dark:bg-gray-800/80"
@@ -1733,11 +1867,27 @@ const CategoryChip = ({ categoryKey }) => {
               >
                 Submit My Votes ({(selectedCategories || []).length}/3)
               </button>
+              {isHost && (
+                <button
+                  onClick={returnToLobby}
+                  className="w-full mt-3 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
+                >
+                  Return to Lobby
+                </button>
+              )}
             </>
           ) : (
             <div className="text-center">
               <div className="mb-4"><ProgressIndicator current={Object.keys(categoryVotes || {}).length} total={players.length} /></div>
               {isHost ? <p className="text-gray-600 dark:text-gray-300">You can continue once everyone votes.</p> : <p className="text-gray-600 dark:text-gray-300">Waiting for host…</p>}
+              {isHost && (
+                <button
+                  onClick={returnToLobby}
+                  className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
+                >
+                  Return to Lobby
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1780,6 +1930,14 @@ const CategoryChip = ({ categoryKey }) => {
             </button>
           ) : (
             <p className="text-gray-500 dark:text-gray-300">Waiting for host to start…</p>
+          )}
+          {isHost && (
+            <button
+              onClick={returnToLobby}
+              className="w-full mt-3 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
+            >
+              Return to Lobby
+            </button>
           )}
         </div>
       </div>
@@ -1927,10 +2085,7 @@ const CategoryChip = ({ categoryKey }) => {
 
             {isHost && (
               <button
-                onClick={() => {
-                  if (!confirm('Return everyone to the lobby?')) return;
-                  returnToLobby();
-                }}
+                onClick={returnToLobby}
                 className="w-full bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold"
               >
                 Return to Lobby
@@ -1946,7 +2101,7 @@ const CategoryChip = ({ categoryKey }) => {
      PARTY MODE SCREENS
   -------------------------- */
 
-  // Party setup (host sees Start Round; host also has Return to lobby)
+  // Party setup (host sees Start Round + intro modal)
   if (gameState === 'party_setup' && party) {
     const turnOwner = players[party.turnIndex]?.name;
     return (
@@ -1954,6 +2109,8 @@ const CategoryChip = ({ categoryKey }) => {
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+          {showPartyIntro && <PartyIntroModal onClose={() => setShowPartyIntro(false)} />}
+
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-bold">Party Mode</h2>
             <Scoreboard scores={party.scores || {}} inline />
@@ -1985,7 +2142,7 @@ const CategoryChip = ({ categoryKey }) => {
 
           {isHost && (
             <button
-              onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
+              onClick={returnToLobby}
               className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
             >
               Return to Lobby
@@ -2034,7 +2191,7 @@ const CategoryChip = ({ categoryKey }) => {
 
             {isHost && (
               <button
-                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
+                onClick={returnToLobby}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2078,7 +2235,7 @@ const CategoryChip = ({ categoryKey }) => {
 
             {isHost && (
               <button
-                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
+                onClick={returnToLobby}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2131,7 +2288,7 @@ const CategoryChip = ({ categoryKey }) => {
 
             {isHost && (
               <button
-                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
+                onClick={returnToLobby}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2173,7 +2330,7 @@ const CategoryChip = ({ categoryKey }) => {
 
             {isHost && (
               <button
-                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
+                onClick={returnToLobby}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2228,7 +2385,7 @@ const CategoryChip = ({ categoryKey }) => {
 
           {isHost && (
             <button
-              onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
+              onClick={returnToLobby}
               className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
             >
               Return to Lobby
@@ -2241,4 +2398,28 @@ const CategoryChip = ({ categoryKey }) => {
 
   // Fallback
   return null;
+}
+
+/* =========================
+   One-time Party intro modal
+========================= */
+function PartyIntroModal({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+      <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl p-6 max-w-lg w-full shadow-xl">
+        <h3 className="text-xl font-bold mb-3">How Party Mode works</h3>
+        <ul className="list-disc pl-5 space-y-2 text-sm">
+          <li><strong>Fill in the Blank:</strong> Everyone submits completions. The turn owner picks a favorite → that player +1.</li>
+          <li><strong>Superlatives:</strong> Vote who best fits the prompt. Most votes wins +1. Ties create a new prompt until one winner.</li>
+          <li><strong>Never Have I Ever:</strong> Everyone answers privately. The turn owner guesses each person. Correct guesses give +1 to both the host and that player.</li>
+        </ul>
+        <button
+          onClick={() => { try { localStorage.setItem('partyIntroSeen', '1'); } catch {} onClose(); }}
+          className="mt-5 w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
+        >
+          I get it, let’s go!
+        </button>
+      </div>
+    </div>
+  );
 }
