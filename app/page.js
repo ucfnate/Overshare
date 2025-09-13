@@ -855,7 +855,6 @@ export default function Overshare() {
   /* =========================================================
      Party helpers
   ========================================================= */
-  const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)]; // (dup safe)
 
   const partyChooseTypeAndPrompt = (roundNum) => {
     const mod = ((roundNum || 1) - 1) % 3; // 1: fill, 2: super, 3: nhi
@@ -1154,6 +1153,81 @@ export default function Overshare() {
       <ThemePicker value={bgTheme} onChange={setBgTheme} />
     </>
   );
+// --- Inline UI bits used across screens (place above "Screens")
+const NotificationToast = () => {
+  if (!notification) return null;
+  return (
+    <div className="fixed inset-x-0 bottom-6 z-50 flex justify-center">
+      <div className="flex items-center gap-2 bg-black/80 text-white px-4 py-2 rounded-full shadow">
+        <span className="text-lg">{notification.emoji}</span>
+        <span className="text-sm">{notification.message}</span>
+        <button
+          onClick={() => setNotification(null)}
+          className="ml-1 opacity-70 hover:opacity-100"
+          aria-label="Close"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const HelpModal = () => {
+  if (!showHelp) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 max-w-lg w-full">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-lg font-semibold">How to play</h3>
+          <button
+            onClick={() => setShowHelp(false)}
+            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <ul className="text-sm text-gray-600 dark:text-gray-300 list-disc pl-5 space-y-1">
+          <li>Pick Solo or Multiplayer.</li>
+          <li>In Classic, vote categories → take turns answering prompts.</li>
+          <li>In Party, follow the on-screen steps for each mini-game.</li>
+          <li>Use the left 🎨 button to change background theme.</li>
+        </ul>
+      </div>
+    </div>
+  );
+};
+
+const PlayerList = ({ players = [], title = 'Players' }) => (
+  <div className="text-left mb-4">
+    <h3 className="font-semibold mb-2">{title}</h3>
+    <ul className="space-y-2">
+      {players.map((p) => (
+        <li
+          key={p.id}
+          className="flex items-center justify-between p-2 rounded-xl border border-gray-200 dark:border-gray-700"
+        >
+          <span>{p.name}</span>
+          {p.isHost && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200">
+              Host
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  </div>
+);
+
+const CategoryChip = ({ categoryKey }) => {
+  const cat = CATEGORIES[categoryKey];
+  return (
+    <span className="text-xs px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-700">
+      {cat?.name || categoryKey}
+    </span>
+  );
+};
 
   /* =========================
      Screens
