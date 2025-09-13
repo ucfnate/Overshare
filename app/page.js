@@ -24,7 +24,7 @@ import {
   Wand2
 } from 'lucide-react';
 
-import { db } from '../lib/firebase';
+import { db, listenToAlerts } from '../lib/firebase';
 import {
   doc,
   setDoc,
@@ -101,8 +101,7 @@ function FillCollectView({
   isTurnOwner,
   onSubmitAnswer,
   onMarkDone,
-  onPickFavorite,
-  onToggleScores
+  onPickFavorite
 }) {
   const [draft, setDraft] = useState('');
   useEffect(() => { setDraft(''); }, [party?.prompt]);
@@ -181,17 +180,9 @@ function FillCollectView({
 }
 
 // --- Superlatives: choose & submit a vote (two-step to avoid “game stops”)
-function SuperVoteView({
-  party,
-  players,
-  playerName,
-  onSubmitVote,
-}) {
+function SuperVoteView({ party, players, playerName, onSubmitVote }) {
   const [choice, setChoice] = useState(party?.votes?.[playerName] || '');
-  useEffect(() => {
-    // keep local in sync if state resets (e.g., tiebreaker)
-    setChoice(party?.votes?.[playerName] || '');
-  }, [party?.prompt, party?.tiebreak]);
+  useEffect(() => setChoice(party?.votes?.[playerName] || ''), [party?.prompt, party?.tiebreak]);
 
   const myVoteSubmitted = !!party?.votes?.[playerName];
 
@@ -235,23 +226,13 @@ function SuperVoteView({
 }
 
 // --- Never Have I Ever: pick (highlight) then submit
-function NhiCollectView({
-  party,
-  players,
-  playerName,
-  turnOwner,
-  isTurnOwner,
-  onSubmitMyAnswer
-}) {
+function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, onSubmitMyAnswer }) {
   const [local, setLocal] = useState(null);
   const myAnsOnServer = party?.nhiAnswers?.[playerName];
   const others = (players || []).filter(p => p.name !== turnOwner);
   const allSubmitted = others.length > 0 && others.every(p => party?.nhiAnswers?.[p.name] !== undefined);
 
-  useEffect(() => {
-    // reset local selection when the prompt changes
-    setLocal(null);
-  }, [party?.prompt]);
+  useEffect(() => setLocal(null), [party?.prompt]);
 
   return (
     <>
@@ -268,9 +249,7 @@ function NhiCollectView({
               onClick={() => setLocal(true)}
               disabled={myAnsOnServer !== undefined}
               className={`flex-1 border-2 py-3 rounded-xl font-semibold ${
-                local === true
-                  ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                  : 'border-gray-300 dark:border-gray-600'
+                local === true ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-300 dark:border-gray-600'
               } ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               I have
@@ -279,9 +258,7 @@ function NhiCollectView({
               onClick={() => setLocal(false)}
               disabled={myAnsOnServer !== undefined}
               className={`flex-1 border-2 py-3 rounded-xl font-semibold ${
-                local === false
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-gray-300 dark:border-gray-600'
+                local === false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600'
               } ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               I haven’t
@@ -292,7 +269,7 @@ function NhiCollectView({
             <button
               onClick={() => { if (local !== null) onSubmitMyAnswer(local); }}
               disabled={local === null}
-              className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold disabled:opacity-50"
+              className="w-full mt-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
             >
               Submit
             </button>
@@ -318,14 +295,7 @@ function NhiCollectView({
 }
 
 // --- NHI guessing: only turn owner chooses Has/Hasn’t for each player, then confirm
-function NhiGuessView({
-  party,
-  players,
-  playerName,
-  turnOwner,
-  isTurnOwner,
-  onConfirmGuesses
-}) {
+function NhiGuessView({ party, players, playerName, turnOwner, isTurnOwner, onConfirmGuesses }) {
   const [guessMap, setGuessMap] = useState({});
   const others = (players || []).filter(p => p.name !== turnOwner);
 
@@ -377,7 +347,9 @@ function NhiGuessView({
    Main Component
 ========================================================= */
 export default function Overshare() {
-  /* State */
+  /* =========================
+     State
+  ========================= */
   const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
@@ -414,33 +386,33 @@ export default function Overshare() {
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showScores, setShowScores] = useState(false);
-// --- Background themes
-const BG_THEMES = {
-  sunset: 'bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500',
-  ocean:  'bg-gradient-to-br from-sky-600 via-cyan-500 to-emerald-500',
-  dusk:   'bg-gradient-to-br from-indigo-700 via-purple-700 to-fuchsia-600',
-  vapor:  'bg-gradient-to-br from-rose-400 via-fuchsia-500 to-indigo-500',
-  slate:  'bg-gradient-to-br from-slate-700 via-slate-800 to-black',
-  plain:  'bg-gray-100 dark:bg-gray-900', // non-gradient
-};
 
-const [bgTheme, setBgTheme] = useState('sunset');
-const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
+  // --- Background themes (persisted locally)
+  const BG_THEMES = {
+    sunset: 'bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500',
+    ocean:  'bg-gradient-to-br from-sky-600 via-cyan-500 to-emerald-500',
+    dusk:   'bg-gradient-to-br from-indigo-700 via-purple-700 to-fuchsia-600',
+    vapor:  'bg-gradient-to-br from-rose-400 via-fuchsia-500 to-indigo-500',
+    slate:  'bg-gradient-to-br from-slate-700 via-slate-800 to-black',
+    plain:  'bg-gray-100 dark:bg-gray-900', // non-gradient
+  };
+  const [bgTheme, setBgTheme] = useState('sunset');
+  const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
+  // load saved theme on mount
+  useEffect(() => { try { const saved = localStorage.getItem('bgTheme'); if (saved) setBgTheme(saved); } catch {} }, []);
+  // save theme when it changes
+  useEffect(() => { try { localStorage.setItem('bgTheme', bgTheme); } catch {} }, [bgTheme]);
 
-// persist choice locally (optional)
-useEffect(() => {
-  try { const saved = localStorage.getItem('bgTheme'); if (saved) setBgTheme(saved); } catch {}
-}, []);
-useEffect(() => {
-  try { localStorage.setItem('bgTheme', bgTheme); } catch {}
-}, [bgTheme]);
-
-  /* Refs */
+  /* =========================
+     Refs
+  ========================= */
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
 
-  /* Category library */
+  /* =========================
+     Icons + Categories (library or fallback)
+  ========================= */
   const iconMap = useMemo(
     () => ({ Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle }),
     []
@@ -519,7 +491,9 @@ useEffect(() => {
     return typeof getRandomQImport === 'function' && !usingFallback;
   }, [CATEGORIES, FALLBACK_CATEGORIES]);
 
-  /* Audio + notifications */
+  /* =========================
+     Audio + notifications
+  ========================= */
   const getAudio = () => {
     if (!audioEnabled) return null;
     try {
@@ -529,9 +503,7 @@ useEffect(() => {
         audioCtxRef.current = new Ctx();
       }
       return audioCtxRef.current;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   };
 
   const playSound = (type) => {
@@ -582,22 +554,24 @@ useEffect(() => {
     showNotification._t = window.setTimeout(() => setNotification(null), 3000);
   };
 
+  /* =========================
+     Alerts listener (per-player toasts)
+  ========================= */
   useEffect(() => {
-  if (!sessionCode || !playerName) return;
+    if (!sessionCode || !playerName) return;
 
-  const unsub = listenToAlerts(sessionCode, playerName, ({ type, message }) => {
-    // start simple:
-    alert(message);
+    const unsub = listenToAlerts(sessionCode, playerName, ({ type, message }) => {
+      // Use the shared toast so it looks consistent everywhere
+      showNotification(message, type === 'success' ? '✅' : '🔔');
+      try { playSound('success'); } catch {}
+    });
 
-    // or, use your built-in toast instead of alert:
-    // showNotification(message, type === 'success' ? '✅' : '🔔');
-    try { playSound('success'); } catch {}
-  });
+    return () => unsub && unsub();
+  }, [sessionCode, playerName]);
 
-  return () => unsub && unsub();
-}, [sessionCode, playerName]);
-
-  /* Questions & prompts */
+  /* =========================
+     Questions & prompts
+  ========================= */
   const getQuestion = useCallback((categoryKey, exclude = []) => {
     if (typeof getRandomQImport === 'function') {
       try {
@@ -651,7 +625,9 @@ useEffect(() => {
 
   const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-  /* Firestore: session helpers */
+  /* =========================================================
+     Firestore: session helpers
+  ========================================================= */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
@@ -747,7 +723,9 @@ useEffect(() => {
     };
   }, []);
 
-  /* Create / Join / Return */
+  /* =========================================================
+     Create / Join / Return
+  ========================================================= */
   const handleCreateSession = async () => {
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const hostPlayer = {
@@ -801,7 +779,9 @@ useEffect(() => {
     setGameState('waitingRoom');
   };
 
-  /* Classic helpers */
+  /* =========================================================
+     Classic helpers
+  ========================================================= */
   const calculateTopCategories = (votes) => {
     const counts = {};
     Object.values(votes || {}).forEach(arr => (arr || []).forEach(cat => {
@@ -872,7 +852,11 @@ useEffect(() => {
     try { playSound('turn'); } catch {}
   };
 
-  /* Party helpers */
+  /* =========================================================
+     Party helpers
+  ========================================================= */
+  const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)]; // (dup safe)
+
   const partyChooseTypeAndPrompt = (roundNum) => {
     const mod = ((roundNum || 1) - 1) % 3; // 1: fill, 2: super, 3: nhi
     const type = mod === 0 ? 'fill' : mod === 1 ? 'super' : 'nhi';
@@ -910,7 +894,6 @@ useEffect(() => {
 
   const hostStartPartyRound = async () => {
     if (!sessionCode || !party) return;
-    // host button only renders on setup; but allow anyone to tap if they’re the next owner in wait_next
     const round = party.round || 1;
     const { type, prompt } = partyChooseTypeAndPrompt(round);
     const next = {
@@ -924,7 +907,6 @@ useEffect(() => {
       nhiAnswers: {},
       guesses: {},
       winner: null,
-      // keep turnIndex as set before entering setup/wait_next
       tiebreak: type === 'super' ? (party.tiebreak || 0) : 0,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next, gameState: 'party_active' });
@@ -1012,7 +994,7 @@ useEffect(() => {
     const votes = { ...(party.votes || {}), [playerName]: voteForName };
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.votes': votes });
 
-    // If everyone voted, tally on whoever’s client hits last; that’s fine since we write idempotently
+    // If everyone voted, tally on whoever’s client hits last; idempotent writes keep us safe
     const everyoneVoted = players.length > 0 && players.every(p => votes[p.name]);
     if (everyoneVoted) {
       const tally = {};
@@ -1050,7 +1032,7 @@ useEffect(() => {
     }
   };
 
-  // NHI: non-turn answer submission (now two-step in UI)
+  // NHI: non-turn answer submission (two-step in UI)
   const submitNhiAnswer = async (hasDone) => {
     if (!sessionCode || !party) return;
     const me = playerName;
@@ -1102,171 +1084,75 @@ useEffect(() => {
   };
 
   /* =========================
-     Topbar / helpers
+     Topbar / Theme picker / Helpers
   ========================= */
-const TopBar = () => (
-  <>
-    {/* existing top-right toolbar */}
-    <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-      <span
-        title={libraryOK ? 'Using external question library' : 'Using built-in fallback questions'}
-        className={`hidden sm:inline-flex px-2 py-1 rounded-lg text-xs font-medium ${libraryOK ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}
-      >
-        {libraryOK ? 'Library' : 'Fallback'}
-      </span>
-
-      <button
-        onClick={() => { setAudioEnabled(v => !v); try { playSound('click'); } catch {} }}
-        className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
-        aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
-        title={audioEnabled ? 'Sound: on' : 'Sound: off'}
-      >
-        {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-      </button>
-
-      <button
-        onClick={() => setShowHelp(true)}
-        className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
-        aria-label="Help"
-        title="Help"
-      >
-        <HelpCircle className="w-5 h-5" />
-      </button>
-    </div>
-
-    {/* NEW: floating background picker on the left */}
-    <ThemePicker value={bgTheme} onChange={setBgTheme} />
-  </>
-);
-
-function ThemePicker({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="fixed left-3 top-1/2 -translate-y-1/2 z-50">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="px-3 py-2 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 shadow hover:bg-white"
-        title="Background theme"
-        aria-haspopup="listbox"
-      >
-        🎨
-      </button>
-
-      {open && (
-        <div className="mt-2 w-44 rounded-xl bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 shadow-lg p-2">
-          <label className="block text-xs text-gray-500 dark:text-gray-300 mb-1">Background</label>
-          <select
-            value={value}
-            onChange={(e) => { onChange(e.target.value); setOpen(false); }}
-            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-sm p-2"
-          >
-            <option value="sunset">Sunset</option>
-            <option value="ocean">Ocean</option>
-            <option value="dusk">Dusk</option>
-            <option value="vapor">Vapor</option>
-            <option value="slate">Slate</option>
-            <option value="plain">Plain</option>
-          </select>
-        </div>
-      )}
-    </div>
-  );
-}
-
-  const HelpModal = () => {
-    if (!showHelp) return null;
+  function ThemePicker({ value, onChange }) {
+    const [open, setOpen] = useState(false);
     return (
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-        onClick={(e) => { if (e.target === e.currentTarget) setShowHelp(false); }}
-      >
-        <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-2xl p-6 relative">
-          <button
-            className="absolute top-3 right-3 text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100"
-            onClick={() => setShowHelp(false)}
-            aria-label="Close help"
-          >
-            <X className="w-5 h-5" />
-          </button>
+      <div className="fixed left-3 top-1/2 -translate-y-1/2 z-50">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="px-3 py-2 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 shadow hover:bg-white"
+          title="Background theme"
+          aria-haspopup="listbox"
+        >
+          🎨
+        </button>
 
-          <div className="flex items-center gap-3 mb-4">
-            <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500">
-              <MessageCircle className="w-5 h-5 text-white" />
-            </div>
-            <h3 className="text-xl font-semibold">How to Play Overshare</h3>
-          </div>
-
-          <div className="space-y-3 text-gray-700 dark:text-gray-200">
-            <p>Pick Solo for a quick, one-device game; pick Multiplayer to host or join a lobby.</p>
-            <p>Classic = conversation rounds by category. Party = Fill-in-the-Blank, Superlatives, and Never Have I Ever with scoring.</p>
-            <p className="text-sm text-gray-500 dark:text-gray-300">Pro tip: the more you share, the better the stories get.</p>
-          </div>
-
-          <div className="mt-6 border-t border-gray-200 dark:border-gray-600 pt-4 flex items-center justify-between">
-            <span className="text-sm text-gray-500 dark:text-gray-300">Enjoying the game?</span>
-            <a
-              href="https://venmo.com/ucfnate"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white text-sm font-medium hover:shadow-md"
+        {open && (
+          <div className="mt-2 w-44 rounded-xl bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 shadow-lg p-2">
+            <label className="block text-xs text-gray-500 dark:text-gray-300 mb-1">Background</label>
+            <select
+              value={value}
+              onChange={(e) => { onChange(e.target.value); setOpen(false); }}
+              className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-sm p-2"
             >
-              💜 Donate
-            </a>
+              <option value="sunset">Sunset</option>
+              <option value="ocean">Ocean</option>
+              <option value="dusk">Dusk</option>
+              <option value="vapor">Vapor</option>
+              <option value="slate">Slate</option>
+              <option value="plain">Plain</option>
+            </select>
           </div>
-        </div>
+        )}
       </div>
     );
-  };
+  }
 
-  const NotificationToast = () => {
-    if (!notification) return null;
-    return (
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl shadow-lg p-4 z-50">
-        <div className="flex items-center space-x-2">
-          <span className="text-2xl">{notification.emoji}</span>
-          <span className="font-medium text-gray-800 dark:text-gray-100">{notification.message}</span>
-        </div>
-      </div>
-    );
-  };
+  const TopBar = () => (
+    <>
+      {/* existing top-right toolbar */}
+      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+        <span
+          title={libraryOK ? 'Using external question library' : 'Using built-in fallback questions'}
+          className={`hidden sm:inline-flex px-2 py-1 rounded-lg text-xs font-medium ${libraryOK ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}
+        >
+          {libraryOK ? 'Library' : 'Fallback'}
+        </span>
 
-  const CategoryChip = ({ categoryKey }) => {
-    const category = CATEGORIES[categoryKey];
-    const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-    return (
-      <div className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'} text-white text-sm`}>
-        <IconComponent className="w-4 h-4" />
-        <span>{category?.name || categoryKey}</span>
-      </div>
-    );
-  };
+        <button
+          onClick={() => { setAudioEnabled(v => !v); try { playSound('click'); } catch {} }}
+          className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
+          aria-label={audioEnabled ? 'Disable sound' : 'Enable sound'}
+          title={audioEnabled ? 'Sound: on' : 'Sound: off'}
+        >
+          {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+        </button>
 
-  const PlayerList = ({ players: list, title, showCheck = false, highlight = null }) => (
-    <div className="mb-6">
-      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-3">
-        {title} ({(list || []).length})
-      </h3>
-      <div className="space-y-2">
-        {(list || []).map((p, i) => (
-          <div
-            key={`${p?.id || 'p'}-${i}`}
-            className={`flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700 rounded-xl ${
-              highlight === p?.name ? 'ring-2 ring-purple-500 bg-purple-50 dark:bg-purple-900/30' : ''
-            }`}
-          >
-            <span className="font-medium">{p?.name || 'Player'}</span>
-            <div className="flex items-center gap-2">
-              {p?.isHost && (
-                <span className="text-xs bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-200 px-2 py-1 rounded-full">
-                  Host
-                </span>
-              )}
-              {showCheck && (<CheckCircle2 className="w-4 h-4 text-green-500" />)}
-            </div>
-          </div>
-        ))}
+        <button
+          onClick={() => setShowHelp(true)}
+          className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full hover:bg-white/30 dark:hover:bg-white/20 transition-all"
+          aria-label="Help"
+          title="Help"
+        >
+          <HelpCircle className="w-5 h-5" />
+        </button>
       </div>
-    </div>
+
+      {/* NEW: floating background picker on the left */}
+      <ThemePicker value={bgTheme} onChange={setBgTheme} />
+    </>
   );
 
   /* =========================
@@ -1533,18 +1419,19 @@ function ThemePicker({ value, onChange }) {
             <h2 className="text-2xl font-bold mb-2">Lobby {sessionCode}</h2>
             <p className="text-gray-600 dark:text-gray-300">Share this code to join</p>
           </div>
-{/* Under the lobby header in the waitingRoom block */}
-<div className="mb-3">
-  <button
-    onClick={async () => {
-      try { await navigator.clipboard.writeText(sessionCode); alert('Session code copied!'); }
-      catch { alert('Could not copy. Long-press / select to copy.'); }
-    }}
-    className="px-3 py-1 text-sm rounded-lg border bg-white/80 dark:bg-gray-800/80"
-  >
-    Copy code
-  </button>
-</div>
+
+          {/* Copy session code */}
+          <div className="mb-3">
+            <button
+              onClick={async () => {
+                try { await navigator.clipboard.writeText(sessionCode); showNotification('Session code copied!', '📋'); }
+                catch { alert('Could not copy. Long-press / select to copy.'); }
+              }}
+              className="px-3 py-1 text-sm rounded-lg border bg-white/80 dark:bg-gray-800/80"
+            >
+              Copy code
+            </button>
+          </div>
 
           <PlayerList players={players} title="Players" />
 
@@ -1640,15 +1527,15 @@ function ThemePicker({ value, onChange }) {
               {partyDisabled && <p className="text-sm text-gray-500 dark:text-gray-300">Need at least 3 players for Party Mode.</p>}
 
               {/* Host can bounce back to lobby easily */}
-                 <button
-                  onClick={() => {
-                    if (!confirm('Leave the current round and return everyone to the lobby?')) return;
-                    returnToLobby(); // you already have this helper
-                  }}
-                  className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
-                >
-                  Return to Lobby
-                </button>
+              <button
+                onClick={() => {
+                  if (!confirm('Leave the current round and return everyone to the lobby?')) return;
+                  returnToLobby();
+                }}
+                className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
+              >
+                Return to Lobby
+              </button>
             </div>
           ) : (
             <p className="text-gray-500 dark:text-gray-300">Waiting for host to select a mode…</p>
@@ -1966,7 +1853,10 @@ function ThemePicker({ value, onChange }) {
 
             {isHost && (
               <button
-                onClick={returnToLobby}
+                onClick={() => {
+                  if (!confirm('Return everyone to the lobby?')) return;
+                  returnToLobby();
+                }}
                 className="w-full bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold"
               >
                 Return to Lobby
@@ -2021,7 +1911,7 @@ function ThemePicker({ value, onChange }) {
 
           {isHost && (
             <button
-              onClick={returnToLobby}
+              onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
               className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
             >
               Return to Lobby
@@ -2070,7 +1960,7 @@ function ThemePicker({ value, onChange }) {
 
             {isHost && (
               <button
-                onClick={returnToLobby}
+                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2114,7 +2004,7 @@ function ThemePicker({ value, onChange }) {
 
             {isHost && (
               <button
-                onClick={returnToLobby}
+                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2167,7 +2057,7 @@ function ThemePicker({ value, onChange }) {
 
             {isHost && (
               <button
-                onClick={returnToLobby}
+                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2209,7 +2099,7 @@ function ThemePicker({ value, onChange }) {
 
             {isHost && (
               <button
-                onClick={returnToLobby}
+                onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
               >
                 Return to Lobby
@@ -2264,7 +2154,7 @@ function ThemePicker({ value, onChange }) {
 
           {isHost && (
             <button
-              onClick={returnToLobby}
+              onClick={() => { if (!confirm('Return everyone to the lobby?')) return; returnToLobby(); }}
               className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
             >
               Return to Lobby
@@ -2278,4 +2168,3 @@ function ThemePicker({ value, onChange }) {
   // Fallback
   return null;
 }
-
