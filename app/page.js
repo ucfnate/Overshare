@@ -36,15 +36,15 @@ import {
 } from 'firebase/firestore';
 
 // Question library (unchanged)
+// put these up with your other imports in app/page.js
+import * as nhieImport from '../nhie.js';
+import * as superImport from '../superlatives.js';
+import * as fillImport from '../fillin.js';
+
 import {
   questionCategories as qcImport,
-  getRandomQuestion as getRandomQImport
-} from '../lib/questionCategories';
-
-// External prompt packs (robust to different export shapes)
-import * as nhieImport from 'lib/nhie.js';
-import * as superImport from 'lib/superlatives.js';
-import * as fillImport from 'lib/fillin.js';
+  getRandomQuestion as getRandomQImport,
+} from '../questionCategories.js';
 
 /* Normalize external arrays if present */
 const EXT_NHI =
