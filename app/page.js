@@ -1,3 +1,4 @@
+```javascript
 'use client';
 export const dynamic = 'force-dynamic';
 
@@ -21,9 +22,10 @@ import {
   Crown,
   Trophy,
   CheckCircle2,
-  Wand2
+  Wand2,
 } from 'lucide-react';
 
+// Firebase helpers (your /lib/firebase must export these)
 import { db, listenToAlerts, pushAlert } from '../lib/firebase';
 import {
   doc,
@@ -32,25 +34,41 @@ import {
   updateDoc,
   onSnapshot,
   serverTimestamp,
-  arrayUnion
+  arrayUnion,
 } from 'firebase/firestore';
 
 // External prompt libraries (in /lib)
-import { nhiePrompts } from '../lib/nhie.js';
-import { superlativesPrompts } from '../lib/superlatives.js';
-import { fillInPrompts } from '../lib/fillin.js';
+import * as nhieImport from '../lib/nhie.js';
+import * as superImport from '../lib/superlatives.js';
+import * as fillImport from '../lib/fillin.js';
 
-// Category library (in /lib)
+// Category library (in /lib) — used for Classic mode
 import {
   questionCategories as qcImport,
   getRandomQuestion as getRandomQImport,
 } from '../lib/questionCategories.js';
 
-/* Normalize external arrays (from /lib) */
-const NHI_PROMPTS  = Array.isArray(nhiePrompts) ? nhiePrompts : [];
-const SUPERLATIVES = Array.isArray(superlativesPrompts) ? superlativesPrompts : [];
-const FILL_PROMPTS = Array.isArray(fillInPrompts) ? fillInPrompts : [];
+/* =========================================================
+   External prompt normalization
+========================================================= */
+const EXT_NHI =
+  Array.isArray(nhieImport.nhiePrompts) ? nhieImport.nhiePrompts :
+  Array.isArray(nhieImport.nhie) ? nhieImport.nhie :
+  Array.isArray(nhieImport.default) ? nhieImport.default : [];
 
+const EXT_SUPER =
+  Array.isArray(superImport.superlativesPrompts) ? superImport.superlativesPrompts :
+  Array.isArray(superImport.superlatives) ? superImport.superlatives :
+  Array.isArray(superImport.default) ? superImport.default : [];
+
+const EXT_FILL =
+  Array.isArray(fillImport.fillInPrompts) ? fillImport.fillInPrompts :
+  Array.isArray(fillImport.fillin) ? fillImport.fillin :
+  Array.isArray(fillImport.default) ? fillImport.default : [];
+
+// Remote-friendly filter (removes “on your left/right”, etc.)
+const remoteSafe = (s) => typeof s === 'string' && !/on your (left|right)/i.test(s);
+const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 /* =========================================================
    Small shared UI
@@ -101,11 +119,10 @@ const Scoreboard = ({ scores = {}, inline = false }) => {
 };
 
 /* =========================================================
-   Party child components
-   (separate to avoid conditional hooks in parent)
+   Party child components (isolated state = fewer hook issues)
 ========================================================= */
 
-// --- Fill in the Blank
+// Fill in the Blank — collect answers & pick favorite
 function FillCollectView({
   party,
   players,
@@ -128,7 +145,6 @@ function FillCollectView({
 
   return (
     <>
-      {/* PROMPT ALWAYS VISIBLE */}
       <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
         <p className="font-medium">{party?.prompt}</p>
       </div>
@@ -192,7 +208,7 @@ function FillCollectView({
   );
 }
 
-// --- Superlatives: choose & submit a vote
+// Superlatives — two-step vote (choose -> submit)
 function SuperVoteView({ party, players, playerName, onSubmitVote }) {
   const [choice, setChoice] = useState(party?.votes?.[playerName] || '');
   useEffect(() => { setChoice(party?.votes?.[playerName] || ''); }, [party?.prompt, party?.tiebreak]);
@@ -200,7 +216,6 @@ function SuperVoteView({ party, players, playerName, onSubmitVote }) {
 
   return (
     <>
-      {/* PROMPT ALWAYS VISIBLE */}
       <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
         <p className="font-medium">{party?.prompt}</p>
       </div>
@@ -237,7 +252,7 @@ function SuperVoteView({ party, players, playerName, onSubmitVote }) {
   );
 }
 
-// --- NHI: collect answers (non-turn players)
+// NHI — players submit “I have / I haven’t”
 function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, onSubmitMyAnswer }) {
   const [local, setLocal] = useState(null);
   const myAnsOnServer = party?.nhiAnswers?.[playerName];
@@ -248,7 +263,6 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
 
   return (
     <>
-      {/* PROMPT ALWAYS VISIBLE */}
       <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4">
         <p className="font-medium">{party?.prompt}</p>
       </div>
@@ -260,22 +274,14 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
             <button
               onClick={() => setLocal(true)}
               disabled={myAnsOnServer !== undefined}
-              className={`flex-1 border-2 py-3 rounded-xl font-semibold ${
-                local === true
-                  ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                  : 'border-gray-300 dark:border-gray-600'
-              } ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
+              className={`flex-1 border-2 py-3 rounded-xl font-semibold ${local === true ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-300 dark:border-gray-600'} ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               I have
             </button>
             <button
               onClick={() => setLocal(false)}
               disabled={myAnsOnServer !== undefined}
-              className={`flex-1 border-2 py-3 rounded-xl font-semibold ${
-                local === false
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-gray-300 dark:border-gray-600'
-              } ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
+              className={`flex-1 border-2 py-3 rounded-xl font-semibold ${local === false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600'} ${myAnsOnServer !== undefined ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               I haven’t
             </button>
@@ -304,14 +310,16 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
       </div>
 
       {isTurnOwner && allSubmitted && (
-        <p className="text-center text-sm text-gray-600 dark:text-gray-300 mt-3">Everyone has submitted — proceed to guessing.</p>
+        <p className="text-center text-sm text-gray-600 dark:text-gray-300 mt-3">
+          Everyone has submitted — proceed to guessing.
+        </p>
       )}
     </>
   );
 }
 
-// --- NHI guessing (turn owner)
-function NhiGuessView({ party, players, playerName, turnOwner, isTurnOwner, onConfirmGuesses }) {
+// NHI — turn owner guesses for each player
+function NhiGuessView({ party, players, turnOwner, isTurnOwner, onConfirmGuesses }) {
   const [guessMap, setGuessMap] = useState({});
   const others = (players || []).filter(p => p.name !== turnOwner);
 
@@ -363,7 +371,7 @@ function NhiGuessView({ party, players, playerName, turnOwner, isTurnOwner, onCo
    Main Component
 ========================================================= */
 export default function Overshare() {
-  /* State */
+  /* High-level state */
   const [gameState, setGameState] = useState('welcome');
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
@@ -372,26 +380,29 @@ export default function Overshare() {
   const [appMode, setAppMode] = useState(null); // 'solo' | 'multi'
   const [mpMode, setMpMode] = useState(null);   // 'classic' | 'party'
 
-  // Shared / classic
+  // Classic
   const [players, setPlayers] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [currentCategory, setCurrentCategory] = useState('');
-  const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedCategories, setSelectedCategories] = useState([]); // session-chosen set
+  const [mySelectedCategories, setMySelectedCategories] = useState([]); // local voting picks
   const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
   const [availableCategories, setAvailableCategories] = useState([]);
   const [usedCategories, setUsedCategories] = useState([]);
   const [turnHistory, setTurnHistory] = useState([]);
   const [currentQuestionAsker, setCurrentQuestionAsker] = useState('');
   const [categoryVotes, setCategoryVotes] = useState({});
-  const [myVotedCategories, setMyVotedCategories] = useState([]);
   const [hasVotedCategories, setHasVotedCategories] = useState(false);
 
-  // Party session blob
-  const [party, setParty] = useState(null); // { state, type, prompt, round, turnIndex, submissions, done, votes, nhiAnswers, guesses, scores, winner, tiebreak, nextTurnIndex, used }
+  // Party
+  const [party, setParty] = useState(null);
+  const [showPartyExplainer, setShowPartyExplainer] = useState(false);
 
   // Solo
   const [soloCategories, setSoloCategories] = useState([]);
   const [soloAsked, setSoloAsked] = useState([]);
+  const [soloSkipsUsed, setSoloSkipsUsed] = useState(0);
+  const soloMaxSkips = 3;
 
   // UX
   const [audioEnabled, setAudioEnabled] = useState(true);
@@ -400,10 +411,6 @@ export default function Overshare() {
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showScores, setShowScores] = useState(false);
-
-  // Solo skip limiter
-  const [soloSkipsUsed, setSoloSkipsUsed] = useState(0);
-  const maxSoloSkips = 3;
 
   // Background themes
   const BG_THEMES = {
@@ -416,31 +423,15 @@ export default function Overshare() {
   };
   const [bgTheme, setBgTheme] = useState('sunset');
   const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
-
   useEffect(() => { try { const saved = localStorage.getItem('bgTheme'); if (saved) setBgTheme(saved); } catch {} }, []);
   useEffect(() => { try { localStorage.setItem('bgTheme', bgTheme); } catch {} }, [bgTheme]);
 
-  // One-time party intro
-  const [showPartyIntro, setShowPartyIntro] = useState(false);
-  useEffect(() => {
-    if (gameState === 'party_setup') {
-      try {
-        const seen = localStorage.getItem('partyIntroSeen');
-        setShowPartyIntro(!seen);
-      } catch {
-        setShowPartyIntro(true);
-      }
-    } else {
-      setShowPartyIntro(false);
-    }
-  }, [gameState]);
-
-  /* Refs */
+  // Refs
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
 
-  /* Category library */
+  /* Category library + fallbacks */
   const iconMap = useMemo(
     () => ({ Sparkles, Heart, Lightbulb, Target, Flame, MessageCircle }),
     []
@@ -455,8 +446,8 @@ export default function Overshare() {
         color: 'from-purple-500 to-pink-500',
         questions: [
           'What was a small win you had this week?',
-          'What’s your go-to fun fact about yourself?'
-        ]
+          'What’s your go-to fun fact about yourself?',
+        ],
       },
       creative: {
         name: 'Creative',
@@ -465,8 +456,8 @@ export default function Overshare() {
         color: 'from-indigo-500 to-purple-500',
         questions: [
           'Invent a wild holiday and describe how we celebrate it.',
-          'Merge two movies into one plot — what happens?'
-        ]
+          'Merge two movies into one plot — what happens?',
+        ],
       },
       deep_dive: {
         name: 'Deep Dive',
@@ -475,8 +466,8 @@ export default function Overshare() {
         color: 'from-blue-500 to-cyan-500',
         questions: [
           'What belief of yours has changed in the last few years?',
-          'What’s a memory that shaped who you are?'
-        ]
+          'What’s a memory that shaped who you are?',
+        ],
       },
       growth: {
         name: 'Growth',
@@ -485,8 +476,8 @@ export default function Overshare() {
         color: 'from-emerald-500 to-teal-500',
         questions: [
           'What habit are you trying to build?',
-          'What’s a risk you’re glad you took?'
-        ]
+          'What’s a risk you’re glad you took?',
+        ],
       },
       spicy: {
         name: 'Spicy',
@@ -495,9 +486,9 @@ export default function Overshare() {
         color: 'from-orange-500 to-red-500',
         questions: [
           'What’s a “hot take” you stand by?',
-          'What’s a topic you wish people were more honest about?'
-        ]
-      }
+          'What’s a topic you wish people were more honest about?',
+        ],
+      },
     }),
     []
   );
@@ -519,7 +510,7 @@ export default function Overshare() {
     return typeof getRandomQImport === 'function' && !usingFallback;
   }, [CATEGORIES, FALLBACK_CATEGORIES]);
 
-  /* Audio + notifications */
+  /* Audio + toasts */
   const getAudio = () => {
     if (!audioEnabled) return null;
     try {
@@ -582,9 +573,9 @@ export default function Overshare() {
     showNotification._t = window.setTimeout(() => setNotification(null), 3000);
   };
 
-  // Alerts listener (toast + sound)
+  // Alerts listener (per-player toasts)
   useEffect(() => {
-    if (!sessionCode || !playerName) return;
+    if (!sessionCode || !playerName || typeof listenToAlerts !== 'function') return;
     const unsub = listenToAlerts(sessionCode, playerName, ({ type, message }) => {
       showNotification(message, type === 'success' ? '✅' : '🔔');
       try { playSound('success'); } catch {}
@@ -592,94 +583,47 @@ export default function Overshare() {
     return () => unsub && unsub();
   }, [sessionCode, playerName]);
 
-  /* Prompt sources (external-first, with fallbacks), + remote-friendly filter */
-  const BASE_SUPERLATIVES = useMemo(() => (EXT_SUPER.length ? EXT_SUPER : [
-    'Most likely to survive a zombie apocalypse',
-    'Most likely to forget why they walked into a room',
-    'Most likely to go viral accidentally',
-    'Best unintentional comedian',
-    'Most likely to befriend their barista',
-    'Best chaotic good energy',
-    'Most likely to bring snacks to everything',
-    'Most likely to start a group chat argument',
-    'Most likely to wear sunglasses indoors',
-    'Most likely to have a secret second life',
-  ]), []);
-  const BASE_FILL_PROMPTS = useMemo(() => (EXT_FILL.length ? EXT_FILL : [
-    'Write the worst possible movie tagline for a rom-com.',
-    'Give a fake but convincing “fun fact” about a common object.',
-    'Invent a new holiday and one cursed tradition.',
-    'Name a brand-new dating app and its unhinged slogan.',
-    'Give a brutal but fair nickname for the person on your left.',
-    'Write a two-word horror story.',
-  ]), []);
-  const BASE_NHI_PROMPTS = useMemo(() => (EXT_NHI.length ? EXT_NHI : [
-    'Never have I ever eaten an entire pizza alone.',
-    'Never have I ever lied to get out of plans.',
-    'Never have I ever stalked an ex on social media.',
-    'Never have I ever laughed at the wrong moment.',
-    'Never have I ever sent a text to the wrong person.',
-    'Never have I ever fallen asleep on a video call.',
-  ]), []);
+  /* Questions & prompts (external-first, remote-safe) */
+  const SUPERLATIVES = useMemo(() => {
+    const fallback = [
+      'Most likely to survive a zombie apocalypse',
+      'Most likely to forget why they walked into a room',
+      'Most likely to go viral accidentally',
+      'Best unintentional comedian',
+      'Most likely to befriend their barista',
+      'Best chaotic good energy',
+      'Most likely to bring snacks to everything',
+      'Most likely to start a group chat argument',
+      'Most likely to wear sunglasses indoors',
+      'Most likely to have a secret second life',
+    ];
+    return (EXT_SUPER.length ? EXT_SUPER : fallback).filter(remoteSafe);
+  }, []);
 
-  // More built-in variety if your external lists are short
-  const SUPERLATIVES = useMemo(() => [
-    ...BASE_SUPERLATIVES,
-    'Most likely to talk to plants',
-    'Most likely to have a burner Instagram for their dog',
-    'Most likely to become a meme',
-    'Most likely to start a podcast',
-    'Most likely to win a staring contest with a cat',
-    'Most likely to clap when the plane lands',
-    'Most likely to become a local celebrity',
-    'Most likely to take over the group chat with voice notes'
-  ], [BASE_SUPERLATIVES]);
+  const FILL_PROMPTS = useMemo(() => {
+    const fallback = [
+      'Write the worst possible movie tagline for a rom-com.',
+      'Give a fake but convincing “fun fact” about a common object.',
+      'Invent a new holiday and one cursed tradition.',
+      'Name a brand-new dating app and its unhinged slogan.',
+      'Give a brutal but fair nickname for a friend.',
+      'Write a two-word horror story.',
+    ];
+    return (EXT_FILL.length ? EXT_FILL : fallback).filter(remoteSafe);
+  }, []);
 
-  const FILL_PROMPTS = useMemo(() => [
-    ...BASE_FILL_PROMPTS,
-    'Describe the world’s most chaotic roommate in 7 words.',
-    'Rename a household item like it’s luxury branding.',
-    'Pitch a new emoji and what it means.',
-    'Write a restaurant review for a gas station snack.',
-    'Invent a conspiracy theory that’s oddly wholesome.',
-    'Create a new sport and its only rule.',
-    'Give a TED talk title for something silly you’re great at.',
-    'Write an inspirational quote that falls apart at the end.',
-    'Write a passive-aggressive note to your future self.',
-    'Summarize a blockbuster in five brutally honest words.'
-  ], [BASE_FILL_PROMPTS]);
+  const NHI_PROMPTS = useMemo(() => {
+    const fallback = [
+      'Never have I ever eaten an entire pizza alone.',
+      'Never have I ever lied to get out of plans.',
+      'Never have I ever stalked an ex on social media.',
+      'Never have I ever laughed at the wrong moment.',
+      'Never have I ever sent a text to the wrong person.',
+      'Never have I ever fallen asleep on a video call.',
+    ];
+    return (EXT_NHI.length ? EXT_NHI : fallback).filter(remoteSafe);
+  }, []);
 
-  const NHI_PROMPTS = useMemo(() => [
-    ...BASE_NHI_PROMPTS,
-    'Never have I ever rage-quit a group chat.',
-    'Never have I ever pretended to lose Wi-Fi on a call.',
-    'Never have I ever posted and deleted within 1 minute.',
-    'Never have I ever rehearsed an argument in the shower.',
-    'Never have I ever used an ex’s streaming account.',
-    'Never have I ever joined a meeting from bed.'
-  ], [BASE_NHI_PROMPTS]);
-
-  const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-  // Remote-friendly filter (avoid “left/right” style in-person prompts)
-  const isRemoteFriendly = (s = '') =>
-    !/\b(to\s+(your|my)\s+(left|right)|on\s+(your|my)\s+(left|right)|\bthe\s+(left|right)\b|\bleft\b|\bright\b)/i.test(s);
-
-  // Helper to pick a unique, remote-friendly prompt by game type against party.used
-  const pickPrompt = (type, usedObj) => {
-    const src = type === 'fill' ? FILL_PROMPTS : type === 'super' ? SUPERLATIVES : NHI_PROMPTS;
-    const pool = (src || []).filter(isRemoteFriendly);
-    const used = new Set((usedObj && usedObj[type]) || []);
-    if (pool.length === 0) return 'New prompt coming soon…';
-    let choice = null;
-    for (let i = 0; i < 64; i++) {
-      const c = pool[(Math.random() * pool.length) | 0];
-      if (!used.has(c)) { choice = c; break; }
-    }
-    return choice || pool[0];
-  };
-
-  /* Questions & prompts (classic) */
   const getQuestion = useCallback((categoryKey, exclude = []) => {
     if (typeof getRandomQImport === 'function') {
       try {
@@ -718,7 +662,7 @@ export default function Overshare() {
         turnHistory: [],
         categoryVotes: {},
         party: null,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
       return true;
     } catch (err) {
@@ -743,6 +687,7 @@ export default function Overshare() {
         if (!snap.exists()) return;
         const data = snap.data() || {};
 
+        // join notifications
         const newCount = (data.players || []).length;
         if (prevCount > 0 && newCount > prevCount) {
           const newPlayer = (data.players || [])[newCount - 1];
@@ -753,13 +698,8 @@ export default function Overshare() {
         }
         prevCount = newCount;
 
+        // session state
         setPlayers([...(data.players || [])]);
-
-        // 🔒 Do NOT clobber local selections during category voting
-        if ((data.gameState || '') !== 'categoryVoting') {
-          setSelectedCategories([...(data.selectedCategories || [])]);
-        }
-
         setCurrentTurnIndex(typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0);
         setCurrentQuestion(data.currentQuestion || '');
         setCurrentCategory(data.currentCategory || '');
@@ -771,12 +711,19 @@ export default function Overshare() {
         setMpMode(data.mode || null);
         setParty(data.party || null);
 
+        // only update selectedCategories from server (not my local voting picks)
+        if (Array.isArray(data.selectedCategories)) {
+          setSelectedCategories([...(data.selectedCategories || [])]);
+        }
+
+        // reset per-turn skip counter
         const incomingTurn = typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0;
         if (incomingTurn !== prevTurnIndexRef.current) {
           setSkipsUsedThisTurn(0);
           prevTurnIndexRef.current = incomingTurn;
         }
 
+        // state transitions
         const incomingRaw = data.gameState || 'waitingRoom';
         const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
         if (incoming !== gameState) {
@@ -785,6 +732,11 @@ export default function Overshare() {
           else if (incoming === 'categoryPicking' || incoming === 'party_setup' || incoming === 'party_active') {
             try { playSound('turn'); } catch {}
           }
+        }
+
+        // show explainer when we enter party_setup round 1
+        if (incoming === 'party_setup' && (data?.party?.round || 1) === 1) {
+          setShowPartyExplainer(true);
         }
       },
       (error) => console.error('Firebase listener error:', error)
@@ -808,7 +760,7 @@ export default function Overshare() {
       id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
       name: playerName,
       isHost: true,
-      joinedAt: new Date().toISOString()
+      joinedAt: new Date().toISOString(),
     };
     const ok = await createFirebaseSession(code, hostPlayer);
     if (!ok) { alert('Failed to create session. Please try again.'); return; }
@@ -834,7 +786,7 @@ export default function Overshare() {
         id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
         name: playerName,
         isHost: false,
-        joinedAt: new Date().toISOString()
+        joinedAt: new Date().toISOString(),
       };
       try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
       catch {
@@ -851,6 +803,7 @@ export default function Overshare() {
 
   const returnToLobby = async () => {
     if (!sessionCode) return;
+    if (!confirm('Return everyone to the lobby? Current round will be left.')) return;
     await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingRoom' });
     setGameState('waitingRoom');
   };
@@ -879,7 +832,7 @@ export default function Overshare() {
       usedCategories: newUsed,
       availableCategories: newAvail,
       turnHistory: newHistory,
-      currentQuestionAsker: currentPlayer.name
+      currentQuestionAsker: currentPlayer.name,
     });
     try { playSound('success'); } catch {}
   };
@@ -898,7 +851,7 @@ export default function Overshare() {
     const newQuestion = getQuestion(forcedCategory, [currentQuestion]);
     await updateDoc(doc(db, 'sessions', sessionCode), {
       currentQuestion: newQuestion,
-      currentCategory: forcedCategory
+      currentCategory: forcedCategory,
     });
     setSkipsUsedThisTurn((n) => n + 1);
     try { playSound('click'); } catch {}
@@ -921,17 +874,29 @@ export default function Overshare() {
       usedCategories: newUsed,
       currentQuestion: '',
       currentCategory: '',
-      currentQuestionAsker: ''
+      currentQuestionAsker: '',
     });
     try { playSound('turn'); } catch {}
   };
 
   /* Party helpers */
-  const partyChooseTypeAndPrompt = (roundNum, used) => {
-    const mod = ((roundNum || 1) - 1) % 3; // 0: fill, 1: super, 2: nhi
+  // Choose type & prompt; avoid repeats by tracking party.usedPrompts
+  const partyChooseTypeAndPrompt = (roundNum, partyState) => {
+    const mod = ((roundNum || 1) - 1) % 3; // 1: fill, 2: super, 3: nhi
     const type = mod === 0 ? 'fill' : mod === 1 ? 'super' : 'nhi';
-    const prompt = pickPrompt(type, used);
-    return { type, prompt };
+    const used = partyState?.usedPrompts || { fill: [], super: [], nhi: [] };
+    const source = type === 'fill' ? FILL_PROMPTS : type === 'super' ? SUPERLATIVES : NHI_PROMPTS;
+
+    // pick prompt not used in this mode yet (up to 20 tries)
+    let prompt = randomOf(source);
+    let tries = 20;
+    while (tries-- > 0 && (used[type] || []).includes(prompt)) {
+      prompt = randomOf(source);
+    }
+    // add to used
+    const nextUsed = { ...used, [type]: [...(used[type] || []), prompt].slice(-200) };
+
+    return { type, prompt, nextUsed };
   };
 
   const startPartyMode = async () => {
@@ -941,7 +906,7 @@ export default function Overshare() {
       gameState: 'party_setup',
       currentTurnIndex: 0,
       party: {
-        state: 'setup', // setup → collect_fill | vote_super | collect_nhi | guessing_nhi → reveal
+        state: 'setup', // setup → collect_fill | vote_super | collect_nhi | guessing_nhi → reveal → wait_next
         type: null,
         prompt: '',
         round: 1,
@@ -955,18 +920,17 @@ export default function Overshare() {
         winner: null,
         tiebreak: 0,
         nextTurnIndex: 0,
-        used: { fill: [], super: [], nhi: [] },
-      }
+        usedPrompts: { fill: [], super: [], nhi: [] },
+      },
     });
     setMpMode('party');
+    setShowPartyExplainer(true);
   };
 
   const hostStartPartyRound = async () => {
     if (!sessionCode || !party) return;
     const round = party.round || 1;
-    const used = { ...(party.used || { fill: [], super: [], nhi: [] }) };
-    const { type, prompt } = partyChooseTypeAndPrompt(round, used);
-    used[type] = [...new Set([...(used[type] || []), prompt])];
+    const { type, prompt, nextUsed } = partyChooseTypeAndPrompt(round, party);
     const next = {
       ...party,
       state: type === 'fill' ? 'collect_fill' : type === 'super' ? 'vote_super' : 'collect_nhi',
@@ -979,9 +943,10 @@ export default function Overshare() {
       guesses: {},
       winner: null,
       tiebreak: type === 'super' ? (party.tiebreak || 0) : 0,
-      used,
+      usedPrompts: nextUsed,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next, gameState: 'party_active' });
+    setShowPartyExplainer(false);
   };
 
   // Next-turn-only starter
@@ -990,9 +955,7 @@ export default function Overshare() {
     const iAmNext = players[party.nextTurnIndex]?.name === playerName;
     if (!iAmNext) return;
     const round = party.round || 2; // already incremented in reveal
-    const used = { ...(party.used || { fill: [], super: [], nhi: [] }) };
-    const { type, prompt } = partyChooseTypeAndPrompt(round, used);
-    used[type] = [...new Set([...(used[type] || []), prompt])];
+    const { type, prompt, nextUsed } = partyChooseTypeAndPrompt(round, party);
     const next = {
       ...party,
       state: type === 'fill' ? 'collect_fill' : type === 'super' ? 'vote_super' : 'collect_nhi',
@@ -1006,16 +969,16 @@ export default function Overshare() {
       winner: null,
       tiebreak: type === 'super' ? (party.tiebreak || 0) : 0,
       turnIndex: party.nextTurnIndex,
-      used,
+      usedPrompts: nextUsed,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), {
       party: next,
       gameState: 'party_active',
-      currentTurnIndex: party.nextTurnIndex
+      currentTurnIndex: party.nextTurnIndex,
     });
   };
 
-  // Fill: submit answer / done (non-turn only)
+  // Fill: submit / done / pick favorite (+alert to winner)
   const submitFillAnswer = async (text) => {
     if (!sessionCode || !party) return;
     const me = playerName;
@@ -1039,7 +1002,6 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.done': done });
   };
 
-  // Fill: host pick favorite → reveal, winner goes next + alert
   const hostPickFavorite = async (answerId) => {
     if (!sessionCode || !party) return;
     const all = Object.values(party.submissions || {}).flat();
@@ -1048,8 +1010,14 @@ export default function Overshare() {
 
     const scores = { ...(party.scores || {}) };
     scores[picked.by] = (scores[picked.by] || 0) + 1;
-
     const winnerIndex = Math.max(0, players.findIndex(p => p.name === picked.by));
+
+    // per-player alert (“your answer was picked”)
+    if (typeof pushAlert === 'function') {
+      try {
+        await pushAlert(sessionCode, picked.by, `🎉 ${players[party.turnIndex]?.name} picked your answer! +1`, 'success');
+      } catch {}
+    }
 
     const next = {
       ...party,
@@ -1057,20 +1025,17 @@ export default function Overshare() {
       winner: picked.by,
       scores,
       nextTurnIndex: winnerIndex,
-      round: (party.round || 1) + 1
+      round: (party.round || 1) + 1,
     };
-
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
-    try { await pushAlert(sessionCode, picked.by, '🎉 Your answer was picked! +1', 'success'); } catch {}
   };
 
-  // Superlatives: submit vote, tally when all in (auto), or tiebreak
+  // Superlatives: submit vote, auto-tally; tiebreak → new prompt
   const submitSuperVote = async (voteForName) => {
     if (!sessionCode || !party) return;
     const votes = { ...(party.votes || {}), [playerName]: voteForName };
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.votes': votes });
 
-    // If everyone voted, tally
     const everyoneVoted = players.length > 0 && players.every(p => votes[p.name]);
     if (everyoneVoted) {
       const tally = {};
@@ -1082,17 +1047,13 @@ export default function Overshare() {
       const tied = sorted.filter(([_, c]) => c === topCount).map(([n]) => n);
 
       if (tied.length > 1) {
-        // new superlative prompt, unique & remote-friendly
-        const used = { ...(party.used || { fill: [], super: [], nhi: [] }) };
-        const newPrompt = pickPrompt('super', used);
-        used.super = [...new Set([...(used.super || []), newPrompt])];
+        // new superlative prompt; keep tiebreak rolling count
         const next = {
           ...party,
-          prompt: newPrompt,
+          prompt: randomOf(SUPERLATIVES),
           votes: {},
           tiebreak: (party.tiebreak || 0) + 1,
           state: 'vote_super',
-          used,
         };
         await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
       } else {
@@ -1100,21 +1061,33 @@ export default function Overshare() {
         const scores = { ...(party.scores || {}) };
         scores[winner] = (scores[winner] || 0) + 1;
         const winnerIndex = Math.max(0, players.findIndex(p => p.name === winner));
+
+        // alert winner, and optionally voters who picked winner
+        if (typeof pushAlert === 'function') {
+          try {
+            await pushAlert(sessionCode, winner, `🏆 You won “${party.prompt}” +1`, 'success');
+            for (const [voter, target] of Object.entries(votes)) {
+              if (target === winner && voter !== winner) {
+                await pushAlert(sessionCode, voter, `👍 Nice pick — ${winner} won that round.`, 'info');
+              }
+            }
+          } catch {}
+        }
+
         const next = {
           ...party,
           state: 'reveal',
           winner,
           scores,
           nextTurnIndex: winnerIndex,
-          round: (party.round || 1) + 1
+          round: (party.round || 1) + 1,
         };
         await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
-        try { await pushAlert(sessionCode, winner, '🏆 You won the round! +1', 'success'); } catch {}
       }
     }
   };
 
-  // NHI: non-turn answer submission
+  // NHI: player submit
   const submitNhiAnswer = async (hasDone) => {
     if (!sessionCode || !party) return;
     const me = playerName;
@@ -1124,14 +1097,13 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { 'party.nhiAnswers': ans });
   };
 
-  // Move to guessing stage (guarded by UI)
   const startNhiGuessing = async () => {
     if (!sessionCode || !party) return;
     const next = { ...party, state: 'guessing_nhi' };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
   };
 
-  // NHI: confirm guesses; host points + per-player points; next is sequential + alerts
+  // NHI: scoring (+alerts)
   const hostSubmitNhiGuesses = async (guessesMap) => {
     if (!sessionCode || !party) return;
     const actual = party.nhiAnswers || {};
@@ -1144,15 +1116,27 @@ export default function Overshare() {
       const correct = (guess && has) || (!guess && !has);
       if (correct) {
         hostPoints += 1;
-        scores[name] = (scores[name] || 0) + 1;
+        scores[name] = (scores[name] || 0) + 1; // player point for being guessed correctly
+        if (typeof pushAlert === 'function') {
+          try {
+            const owner = players[party.turnIndex]?.name;
+            await pushAlert(sessionCode, name, `✨ ${owner} guessed you ${has ? 'have' : "haven't"} — +1`, 'success');
+          } catch {}
+        }
       }
     });
 
     const owner = players[party.turnIndex]?.name;
-    if (owner) scores[owner] = (scores[owner] || 0) + hostPoints;
+    if (owner) {
+      scores[owner] = (scores[owner] || 0) + hostPoints;
+      if (typeof pushAlert === 'function') {
+        try {
+          await pushAlert(sessionCode, owner, `🧠 You guessed ${hostPoints} correctly (+${hostPoints})`, 'success');
+        } catch {}
+      }
+    }
 
     const nextTurn = (party.turnIndex + 1) % (players.length || 1);
-
     const next = {
       ...party,
       state: 'reveal',
@@ -1160,23 +1144,9 @@ export default function Overshare() {
       guesses: guessesMap,
       scores,
       nextTurnIndex: nextTurn,
-      round: (party.round || 1) + 1
+      round: (party.round || 1) + 1,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
-
-    // Alerts
-    try {
-      if (owner && hostPoints > 0) {
-        await pushAlert(sessionCode, owner, `🧠 You guessed ${hostPoints} correctly (+${hostPoints})`, 'success');
-      }
-      await Promise.all(Object.entries(actual).map(async ([name, has]) => {
-        const guess = guessesMap[name];
-        const correct = guess !== undefined && ((guess && has) || (!guess && !has));
-        if (correct) {
-          await pushAlert(sessionCode, name, `✨ ${owner || 'Host'} guessed you ${has ? 'have' : "haven't"} — +1`, 'success');
-        }
-      }));
-    } catch {}
   };
 
   /* =========================
@@ -1184,7 +1154,6 @@ export default function Overshare() {
   ========================= */
   const TopBar = () => (
     <>
-      {/* existing top-right toolbar */}
       <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
         <span
           title={libraryOK ? 'Using external question library' : 'Using built-in fallback questions'}
@@ -1212,7 +1181,7 @@ export default function Overshare() {
         </button>
       </div>
 
-      {/* Floating background picker */}
+      {/* floating background picker on the left */}
       <ThemePicker value={bgTheme} onChange={setBgTheme} />
     </>
   );
@@ -1488,24 +1457,24 @@ export default function Overshare() {
     );
   }
 
-  // Solo play
+  // Solo play (skip limited)
   if (gameState === 'soloPlay') {
     const changeCategory = (key) => {
       const q = getQuestion(key, soloAsked);
       setCurrentCategory(key);
       setCurrentQuestion(q);
       setSoloAsked((prev) => [...prev, q]);
-      setSoloSkipsUsed(0);
+      setSoloSkipsUsed(0); // reset skips per category switch
     };
     const skipSolo = () => {
-      if (soloSkipsUsed >= maxSoloSkips) {
-        showNotification(`Skip limit reached (${maxSoloSkips})`, '⏭️');
+      if (soloSkipsUsed >= soloMaxSkips) {
+        showNotification(`Skip limit reached (${soloMaxSkips}).`, '⏭️');
         return;
       }
       const q = getQuestion(currentCategory, soloAsked);
       setCurrentQuestion(q);
       setSoloAsked((prev) => [...prev, q]);
-      setSoloSkipsUsed((n) => n + 1);
+      setSoloSkipsUsed(n => n + 1);
       try { playSound('click'); } catch {}
     };
 
@@ -1529,19 +1498,20 @@ export default function Overshare() {
             </div>
           </div>
 
-          <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400 mb-6">
+          <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400 mb-3">
             <p className="text-lg leading-relaxed">{currentQuestion}</p>
           </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Skips: {soloSkipsUsed}/{soloMaxSkips}</p>
 
           <div className="flex gap-3">
             <button
               onClick={skipSolo}
               className="flex-1 bg-white dark:bg-gray-900 border-2 border-orange-400 text-orange-600 dark:text-orange-300 py-3 px-6 rounded-xl font-semibold hover:bg-orange-50 dark:hover:bg-orange-900/10"
             >
-              Skip ({soloSkipsUsed}/{maxSoloSkips})
+              Skip
             </button>
             <button
-              onClick={() => { const q = getQuestion(currentCategory, soloAsked); setSoloAsked(p => [...p, q]); setCurrentQuestion(q); try { playSound('turn'); } catch {} }}
+              onClick={() => { const q = getQuestion(currentCategory, soloAsked); setSoloAsked(p => [...p, q]); setCurrentQuestion(q); setSoloSkipsUsed(0); try { playSound('turn'); } catch {} }}
               className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg"
             >
               Next
@@ -1614,11 +1584,10 @@ export default function Overshare() {
         <TopBar />
         <NotificationToast />
         <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
+          <div className="mb-2">
             <h2 className="text-2xl font-bold mb-2">Lobby {sessionCode}</h2>
             <p className="text-gray-600 dark:text-gray-300">Share this code to join</p>
           </div>
-
           <div className="mb-3">
             <button
               onClick={async () => {
@@ -1641,7 +1610,7 @@ export default function Overshare() {
                   id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
                   name: playerName,
                   isHost: false,
-                  joinedAt: new Date().toISOString()
+                  joinedAt: new Date().toISOString(),
                 };
                 const sessionRef = doc(db, 'sessions', sessionCode);
                 const snap = await getDoc(sessionRef);
@@ -1702,6 +1671,8 @@ export default function Overshare() {
                   await updateDoc(doc(db, 'sessions', sessionCode), { mode: 'classic', gameState: 'categoryVoting', categoryVotes: {} });
                   setMpMode('classic');
                   setGameState('categoryVoting');
+                  setMySelectedCategories([]);
+                  setHasVotedCategories(false);
                 }}
                 className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-4 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all"
               >
@@ -1724,12 +1695,8 @@ export default function Overshare() {
               </button>
               {partyDisabled && <p className="text-sm text-gray-500 dark:text-gray-300">Need at least 3 players for Party Mode.</p>}
 
-              {/* Host can bounce back to lobby easily */}
               <button
-                onClick={() => {
-                  if (!confirm('Leave the current round and return everyone to the lobby?')) return;
-                  returnToLobby();
-                }}
+                onClick={returnToLobby}
                 className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
               >
                 Return to Lobby
@@ -1743,15 +1710,11 @@ export default function Overshare() {
     );
   }
 
-  // Category voting (classic)
+  // Category voting (classic) — uses mySelectedCategories (local) so others' submits don’t clear your picks
   if (gameState === 'categoryVoting') {
     const recommended = Object.keys(CATEGORIES).slice(0, 3);
     const allVotes = Object.values(categoryVotes || {});
     const totalVotes = allVotes.length;
-    const waitingFor = (players || [])
-      .filter((p) => !(categoryVotes || {})[p?.name])
-      .map((p) => p?.name);
-    const allPlayersVoted = (players || []).every(p => (categoryVotes || {})[p?.name] && (categoryVotes || {})[p?.name].length > 0);
     const entries = Object.entries(CATEGORIES || {});
 
     const CategoryCard = ({ categoryKey, category, isSelected, isRecommended, onClick, disabled = false }) => {
@@ -1793,7 +1756,6 @@ export default function Overshare() {
       const currentVotes = { ...(data.categoryVotes || {}) };
       currentVotes[playerName] = selectedCats;
       await updateDoc(sessionRef, { categoryVotes: currentVotes });
-      setMyVotedCategories(selectedCats);
       setHasVotedCategories(true);
       try { playSound('success'); } catch {}
       if ((data.players || []).every(p => (currentVotes[p?.name] || []).length > 0)) {
@@ -1827,8 +1789,8 @@ export default function Overshare() {
               <div className="space-y-3 mb-6">
                 {entries.map(([key, category]) => {
                   const isRecommended = (recommended || []).includes(key);
-                  const isSelected = (selectedCategories || []).includes(key);
-                  const disabled = !isSelected && (selectedCategories || []).length >= 3;
+                  const isSelected = (mySelectedCategories || []).includes(key);
+                  const disabled = !isSelected && (mySelectedCategories || []).length >= 3;
                   return (
                     <CategoryCard
                       key={key}
@@ -1839,7 +1801,7 @@ export default function Overshare() {
                       disabled={disabled}
                       onClick={() => {
                         try { playSound('click'); } catch {}
-                        setSelectedCategories((prev) => {
+                        setMySelectedCategories((prev) => {
                           const has = prev.includes(key);
                           if (has) return prev.filter((c) => c !== key);
                           if (prev.length >= 3) return prev;
@@ -1851,16 +1813,17 @@ export default function Overshare() {
                 })}
               </div>
               <button
-                onClick={() => handleCategoryVote(selectedCategories)}
-                disabled={(selectedCategories || []).length === 0}
+                onClick={() => handleCategoryVote(mySelectedCategories)}
+                disabled={(mySelectedCategories || []).length === 0}
                 className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Submit My Votes ({(selectedCategories || []).length}/3)
+                Submit My Votes ({(mySelectedCategories || []).length}/3)
               </button>
+
               {isHost && (
                 <button
                   onClick={returnToLobby}
-                  className="w-full mt-3 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
+                  className="w-full mt-3 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
                 >
                   Return to Lobby
                 </button>
@@ -1873,7 +1836,7 @@ export default function Overshare() {
               {isHost && (
                 <button
                   onClick={returnToLobby}
-                  className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
+                  className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
                 >
                   Return to Lobby
                 </button>
@@ -1904,30 +1867,30 @@ export default function Overshare() {
           </div>
 
           {isHost ? (
-            <button
-              onClick={async () => {
-                try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), {
-                  selectedCategories: safeTop,
-                  availableCategories: safeTop,
-                  gameState: 'categoryPicking'
-                });
-                setGameState('categoryPicking');
-              }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg"
-            >
-              Start Round 1
-            </button>
+            <>
+              <button
+                onClick={async () => {
+                  try { playSound('click'); } catch {}
+                  await updateDoc(doc(db, 'sessions', sessionCode), {
+                    selectedCategories: safeTop,
+                    availableCategories: safeTop,
+                    gameState: 'categoryPicking',
+                  });
+                  setGameState('categoryPicking');
+                }}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg"
+              >
+                Start Round 1
+              </button>
+              <button
+                onClick={returnToLobby}
+                className="w-full mt-3 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
+              >
+                Return to Lobby
+              </button>
+            </>
           ) : (
             <p className="text-gray-500 dark:text-gray-300">Waiting for host to start…</p>
-          )}
-          {isHost && (
-            <button
-              onClick={returnToLobby}
-              className="w-full mt-3 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
-            >
-              Return to Lobby
-            </button>
           )}
         </div>
       </div>
@@ -1993,6 +1956,15 @@ export default function Overshare() {
               <div className="flex flex-wrap gap-2">{usedCategories.map((k) => <span key={k} className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded-full">{CATEGORIES[k]?.name || k}</span>)}</div>
             </div>
           )}
+
+          {isHost && (
+            <button
+              onClick={returnToLobby}
+              className="w-full mt-6 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-medium"
+            >
+              Return to Lobby
+            </button>
+          )}
         </div>
       </div>
     );
@@ -2037,7 +2009,6 @@ export default function Overshare() {
               Round {round} • Turn {turn} of {players.length || 1}
             </p>
 
-            {/* QUESTION ALWAYS VISIBLE */}
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400">
               <p className="text-lg leading-relaxed">{currentQuestion}</p>
             </div>
@@ -2091,16 +2062,46 @@ export default function Overshare() {
      PARTY MODE SCREENS
   -------------------------- */
 
-  // Party setup (host sees Start Round + intro modal)
+  // Party setup (explainer shown on round 1)
   if (gameState === 'party_setup' && party) {
     const turnOwner = players[party.turnIndex]?.name;
     return (
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>  
         <TopBar />
         <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-          {showPartyIntro && <PartyIntroModal onClose={() => setShowPartyIntro(false)} />}
 
+        {/* Explainer modal */}
+        {showPartyExplainer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-2xl p-6 relative">
+              <button
+                className="absolute top-3 right-3 text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100"
+                onClick={() => setShowPartyExplainer(false)}
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-3 mb-3">
+                <Wand2 className="w-6 h-6 text-purple-500" />
+                <h3 className="text-xl font-semibold">Party Mode — How it works</h3>
+              </div>
+              <ul className="text-sm space-y-2">
+                <li>• Rounds rotate between <b>Fill-in-the-Blank</b>, <b>Superlatives</b>, and <b>Never Have I Ever</b>.</li>
+                <li>• The current turn owner reads the prompt; others submit/vote.</li>
+                <li>• Points: winner gets +1. In NHI, correct guesses award points to both the host and players.</li>
+                <li>• After results, only the <b>next owner</b> can start the next round.</li>
+              </ul>
+              <button
+                onClick={() => setShowPartyExplainer(false)}
+                className="mt-4 w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-2 rounded-xl font-semibold"
+              >
+                I get it — let’s go!
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-bold">Party Mode</h2>
             <Scoreboard scores={party.scores || {}} inline />
@@ -2304,7 +2305,6 @@ export default function Overshare() {
             <NhiGuessView
               party={party}
               players={players}
-              playerName={playerName}
               turnOwner={players[party.turnIndex]?.name}
               isTurnOwner={playerName === players[party.turnIndex]?.name}
               onConfirmGuesses={hostSubmitNhiGuesses}
@@ -2332,7 +2332,7 @@ export default function Overshare() {
     }
   }
 
-  // Reveal + wait for next turn owner to start next round
+  // Reveal + next owner starts next round
   if (gameState === 'party_active' && party && party.state === 'reveal') {
     const iAmNextOwner = players[party.nextTurnIndex]?.name === playerName;
     const nextOwnerName = players[party.nextTurnIndex]?.name || '—';
@@ -2346,7 +2346,6 @@ export default function Overshare() {
             <h2 className="text-2xl font-bold">Round Results</h2>
           </div>
 
-          {/* PROMPT ALWAYS VISIBLE */}
           <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 dark:border-purple-400 mb-4 text-left">
             <div className="text-sm text-gray-500 dark:text-gray-300 mb-1">Prompt</div>
             <p className="font-medium">{party.prompt}</p>
@@ -2389,27 +2388,4 @@ export default function Overshare() {
   // Fallback
   return null;
 }
-
-/* =========================
-   One-time Party intro modal
-========================= */
-function PartyIntroModal({ onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
-      <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl p-6 max-w-lg w-full shadow-xl">
-        <h3 className="text-xl font-bold mb-3">How Party Mode works</h3>
-        <ul className="list-disc pl-5 space-y-2 text-sm">
-          <li><strong>Fill in the Blank:</strong> Everyone submits completions. The turn owner picks a favorite → that player +1.</li>
-          <li><strong>Superlatives:</strong> Vote who best fits the prompt. Most votes wins +1. Ties create a new prompt until one winner.</li>
-          <li><strong>Never Have I Ever:</strong> Everyone answers privately. The turn owner guesses each person. Correct guesses give +1 to both the host and that player.</li>
-        </ul>
-        <button
-          onClick={() => { try { localStorage.setItem('partyIntroSeen', '1'); } catch {} onClose(); }}
-          className="mt-5 w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-xl font-semibold"
-        >
-          I get it, let’s go!
-        </button>
-      </div>
-    </div>
-  );
-}
+```
