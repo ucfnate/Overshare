@@ -46,9 +46,6 @@ import {
   getRandomQuestion as getRandomQImport,
 } from '../lib/questionCategories.js';
 
-// Firebase (also in /lib)
-import { db } from '../lib/firebase';
-
 /* Normalize external arrays if present */
 const EXT_NHI =
   Array.isArray(nhieImport?.default) ? nhieImport.default :
