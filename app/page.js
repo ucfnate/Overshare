@@ -1103,51 +1103,65 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
   };
 
-  // NHI: scoring (+alerts)
-  const hostSubmitNhiGuesses = async (guessesMap) => {
-    if (!sessionCode || !party) return;
-    const actual = party.nhiAnswers || {};
-    const scores = { ...(party.scores || {}) };
-    let hostPoints = 0;
+ // NHI: scoring (+alerts)
+const hostSubmitNhiGuesses = async (guessesMap) => {
+  if (!sessionCode || !party) return;
+  const actual = party.nhiAnswers || {};
+  const scores = { ...(party.scores || {}) };
+  let hostPoints = 0;
 
-    Object.entries(actual).forEach(([name, has]) => {
-      const guess = guessesMap[name];
-      if (guess === undefined) return;
-      const correct = (guess && has) || (!guess && !has);
-      if (correct) {
-        hostPoints += 1;
-        scores[name] = (scores[name] || 0) + 1; // player point for being guessed correctly
-        if (typeof pushAlert === 'function') {
-          try {
-            const owner = players[party.turnIndex]?.name;
-            await pushAlert(sessionCode, name, `✨ ${owner} guessed you ${has ? 'have' : "haven't"} — +1`, 'success');
-          } catch {}
-        }
-      }
-    });
+  // Use for...of so we can use await safely inside the loop
+  for (const [name, has] of Object.entries(actual)) {
+    const guess = guessesMap[name];
+    if (guess === undefined) continue;
 
-    const owner = players[party.turnIndex]?.name;
-    if (owner) {
-      scores[owner] = (scores[owner] || 0) + hostPoints;
+    const correct = (guess && has) || (!guess && !has);
+    if (correct) {
+      hostPoints += 1;
+      scores[name] = (scores[name] || 0) + 1; // player point for being guessed correctly
+
       if (typeof pushAlert === 'function') {
         try {
-          await pushAlert(sessionCode, owner, `🧠 You guessed ${hostPoints} correctly (+${hostPoints})`, 'success');
+          const owner = players[party.turnIndex]?.name;
+          await pushAlert(
+            sessionCode,
+            name,
+            `✨ ${owner} guessed you ${has ? 'have' : "haven't"} — +1`,
+            'success'
+          );
         } catch {}
       }
     }
+  }
 
-    const nextTurn = (party.turnIndex + 1) % (players.length || 1);
-    const next = {
-      ...party,
-      state: 'reveal',
-      winner: null,
-      guesses: guessesMap,
-      scores,
-      nextTurnIndex: nextTurn,
-      round: (party.round || 1) + 1,
-    };
-    await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
+  const owner = players[party.turnIndex]?.name;
+  if (owner) {
+    scores[owner] = (scores[owner] || 0) + hostPoints;
+    if (typeof pushAlert === 'function') {
+      try {
+        await pushAlert(
+          sessionCode,
+          owner,
+          `🧠 You guessed ${hostPoints} correctly (+${hostPoints})`,
+          'success'
+        );
+      } catch {}
+    }
+  }
+
+  const nextTurn = (party.turnIndex + 1) % (players.length || 1);
+  const next = {
+    ...party,
+    state: 'reveal',
+    winner: null,
+    guesses: guessesMap,
+    scores,
+    nextTurnIndex: nextTurn,
+    round: (party.round || 1) + 1,
   };
+  await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
+};
+
 
   /* =========================
      Topbar / helpers
@@ -2388,4 +2402,3 @@ export default function Overshare() {
   // Fallback
   return null;
 }
-```
