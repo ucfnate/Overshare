@@ -35,16 +35,19 @@ import {
   arrayUnion
 } from 'firebase/firestore';
 
-// Question library (unchanged)
-// put these up with your other imports in app/page.js
-import * as nhieImport from '../nhie.js';
-import * as superImport from '../superlatives.js';
-import * as fillImport from '../fillin.js';
+// External prompt libraries (in /lib)
+import { nhiePrompts } from '../lib/nhie.js';
+import { superlativesPrompts } from '../lib/superlatives.js';
+import { fillInPrompts } from '../lib/fillin.js';
 
+// Category library (in /lib)
 import {
   questionCategories as qcImport,
   getRandomQuestion as getRandomQImport,
-} from '../questionCategories.js';
+} from '../lib/questionCategories.js';
+
+// Firebase (also in /lib)
+import { db } from '../lib/firebase';
 
 /* Normalize external arrays if present */
 const EXT_NHI =
