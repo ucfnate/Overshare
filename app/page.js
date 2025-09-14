@@ -46,21 +46,11 @@ import {
   getRandomQuestion as getRandomQImport,
 } from '../lib/questionCategories.js';
 
-/* Normalize external arrays if present */
-const EXT_NHI =
-  Array.isArray(nhieImport?.default) ? nhieImport.default :
-  Array.isArray(nhieImport?.NHIE) ? nhieImport.NHIE :
-  Array.isArray(nhieImport?.nhie) ? nhieImport.nhie : [];
+/* Normalize external arrays (from /lib) */
+const NHI_PROMPTS  = Array.isArray(nhiePrompts) ? nhiePrompts : [];
+const SUPERLATIVES = Array.isArray(superlativesPrompts) ? superlativesPrompts : [];
+const FILL_PROMPTS = Array.isArray(fillInPrompts) ? fillInPrompts : [];
 
-const EXT_SUPER =
-  Array.isArray(superImport?.default) ? superImport.default :
-  Array.isArray(superImport?.SUPERLATIVES) ? superImport.SUPERLATIVES :
-  Array.isArray(superImport?.superlatives) ? superImport.superlatives : [];
-
-const EXT_FILL =
-  Array.isArray(fillImport?.default) ? fillImport.default :
-  Array.isArray(fillImport?.FILLIN) ? fillImport.FILLIN :
-  Array.isArray(fillImport?.fillin) ? fillImport.fillin : [];
 
 /* =========================================================
    Small shared UI
