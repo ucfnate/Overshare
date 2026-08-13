@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 
 // Firebase helpers (your /lib/firebase must export these)
-import { db, listenToAlerts, pushAlert } from '../lib/firebase';
+import { db, ensureSignedIn, listenToAlerts, pushAlert } from '../lib/firebase';
 import {
   doc,
   setDoc,
@@ -35,12 +35,16 @@ import {
   onSnapshot,
   serverTimestamp,
   arrayUnion,
+  runTransaction,
 } from 'firebase/firestore';
+import PreferenceQuestionnaire from '../components/PreferenceQuestionnaire';
+import RelationshipQuestionnaire from '../components/RelationshipQuestionnaire';
+import { DEFAULT_PREFERENCES, buildGroupProfile } from '../lib/preferences';
 
 // External prompt libraries (in /lib)
-import * as nhieImport from '../lib/nhie.js';
-import * as superImport from '../lib/superlatives.js';
-import * as fillImport from '../lib/fillin.js';
+import { nhiePrompts } from '../lib/nhie.js';
+import { superlativesPrompts } from '../lib/superlatives.js';
+import { fillInPrompts } from '../lib/fillin.js';
 
 // Category library (in /lib) — used for Classic mode
 import {
@@ -51,20 +55,9 @@ import {
 /* =========================================================
    External prompt normalization
 ========================================================= */
-const EXT_NHI =
-  Array.isArray(nhieImport.nhiePrompts) ? nhieImport.nhiePrompts :
-  Array.isArray(nhieImport.nhie) ? nhieImport.nhie :
-  Array.isArray(nhieImport.default) ? nhieImport.default : [];
-
-const EXT_SUPER =
-  Array.isArray(superImport.superlativesPrompts) ? superImport.superlativesPrompts :
-  Array.isArray(superImport.superlatives) ? superImport.superlatives :
-  Array.isArray(superImport.default) ? superImport.default : [];
-
-const EXT_FILL =
-  Array.isArray(fillImport.fillInPrompts) ? fillImport.fillInPrompts :
-  Array.isArray(fillImport.fillin) ? fillImport.fillin :
-  Array.isArray(fillImport.default) ? fillImport.default : [];
+const EXT_NHI = Array.isArray(nhiePrompts) ? nhiePrompts : [];
+const EXT_SUPER = Array.isArray(superlativesPrompts) ? superlativesPrompts : [];
+const EXT_FILL = Array.isArray(fillInPrompts) ? fillInPrompts : [];
 
 // Remote-friendly filter (removes “on your left/right”, etc.)
 const remoteSafe = (s) => typeof s === 'string' && !/on your (left|right)/i.test(s);
@@ -134,7 +127,6 @@ function FillCollectView({
   onPickFavorite,
 }) {
   const [draft, setDraft] = useState('');
-  useEffect(() => { setDraft(''); }, [party?.prompt]);
 
   const mySubs = (party?.submissions?.[playerName] || []);
   const myDone = !!party?.done?.[playerName];
@@ -211,7 +203,6 @@ function FillCollectView({
 // Superlatives — two-step vote (choose -> submit)
 function SuperVoteView({ party, players, playerName, onSubmitVote }) {
   const [choice, setChoice] = useState(party?.votes?.[playerName] || '');
-  useEffect(() => { setChoice(party?.votes?.[playerName] || ''); }, [party?.prompt, party?.tiebreak]);
   const myVoteSubmitted = !!party?.votes?.[playerName];
 
   return (
@@ -259,7 +250,6 @@ function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, on
   const others = (players || []).filter(p => p.name !== turnOwner);
   const allSubmitted = others.length > 0 && others.every(p => party?.nhiAnswers?.[p.name] !== undefined);
 
-  useEffect(() => { setLocal(null); }, [party?.prompt]);
 
   return (
     <>
@@ -376,6 +366,11 @@ export default function Overshare() {
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
+  const [playerId, setPlayerId] = useState('');
+  const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
+  const [relationships, setRelationships] = useState({});
+  const [preferencesByPlayer, setPreferencesByPlayer] = useState({});
+  const [relationshipsReady, setRelationshipsReady] = useState({});
 
   const [appMode, setAppMode] = useState(null); // 'solo' | 'multi'
   const [mpMode, setMpMode] = useState(null);   // 'classic' | 'party'
@@ -411,6 +406,7 @@ export default function Overshare() {
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showScores, setShowScores] = useState(false);
+  const [showReturnConfirmation, setShowReturnConfirmation] = useState(false);
 
   // Background themes
   const BG_THEMES = {
@@ -425,11 +421,26 @@ export default function Overshare() {
   const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
   useEffect(() => { try { const saved = localStorage.getItem('bgTheme'); if (saved) setBgTheme(saved); } catch {} }, []);
   useEffect(() => { try { localStorage.setItem('bgTheme', bgTheme); } catch {} }, [bgTheme]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('overshare-profile') || 'null');
+      if (saved?.name) setPlayerName(saved.name);
+      if (saved?.preferences) setPreferences({ ...DEFAULT_PREFERENCES, ...saved.preferences });
+    } catch {}
+  }, []);
+
+  const persistProfile = useCallback((nextPreferences = preferences) => {
+    try { localStorage.setItem('overshare-profile', JSON.stringify({ name: playerName.trim(), preferences: nextPreferences })); } catch {}
+  }, [playerName, preferences]);
 
   // Refs
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
+  const gameStateRef = useRef(gameState);
+  const playerIdRef = useRef(playerId);
+  gameStateRef.current = gameState;
+  playerIdRef.current = playerId;
 
   /* Category library + fallbacks */
   const iconMap = useMemo(
@@ -649,6 +660,7 @@ export default function Overshare() {
     try {
       await setDoc(doc(db, 'sessions', code), {
         hostId: hostPlayer.id,
+        participantUids: [hostPlayer.id],
         players: [hostPlayer],
         mode: null,
         gameState: 'waitingRoom',
@@ -661,6 +673,9 @@ export default function Overshare() {
         usedCategories: [],
         turnHistory: [],
         categoryVotes: {},
+        preferencesByPlayer: { [hostPlayer.id]: preferences },
+        groupProfile: buildGroupProfile({ [hostPlayer.id]: preferences }),
+        relationshipsReady: {},
         party: null,
         createdAt: serverTimestamp(),
       });
@@ -708,6 +723,8 @@ export default function Overshare() {
         setUsedCategories([...(data.usedCategories || [])]);
         setTurnHistory([...(data.turnHistory || [])]);
         setCategoryVotes(data.categoryVotes || {});
+        setPreferencesByPlayer(data.preferencesByPlayer || {});
+        setRelationshipsReady(data.relationshipsReady || {});
         setMpMode(data.mode || null);
         setParty(data.party || null);
 
@@ -724,9 +741,12 @@ export default function Overshare() {
         }
 
         // state transitions
-        const incomingRaw = data.gameState || 'waitingRoom';
+        const incomingRaw = data.gameState === 'relationshipSurvey' && data.relationshipsReady?.[playerIdRef.current]
+          ? 'relationshipWaiting'
+          : (data.gameState || 'waitingRoom');
         const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
-        if (incoming !== gameState) {
+        if (incoming !== gameStateRef.current) {
+          gameStateRef.current = incoming;
           setGameState(incoming);
           if (incoming === 'playing') { try { playSound('success'); } catch {} }
           else if (incoming === 'categoryPicking' || incoming === 'party_setup' || incoming === 'party_active') {
@@ -744,7 +764,7 @@ export default function Overshare() {
 
     unsubscribeRef.current = unsubscribe;
     return unsubscribe;
-  }, [playerName, gameState]);
+  }, [playerName]);
 
   useEffect(() => {
     return () => {
@@ -753,18 +773,50 @@ export default function Overshare() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const reconnect = async () => {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem('overshare-session') || 'null'); } catch { return; }
+      if (!saved?.code) return;
+      const user = await ensureSignedIn();
+      if (!user || cancelled) return;
+      const snapshot = await getDoc(doc(db, 'sessions', saved.code));
+      const data = snapshot.exists() ? snapshot.data() : null;
+      const player = data?.players?.find(candidate => candidate.id === user.uid);
+      if (!player || cancelled) return;
+      playerIdRef.current = user.uid;
+      setPlayerId(user.uid);
+      setPlayerName(player.name);
+      setSessionCode(saved.code);
+      setIsHost(data.hostId === user.uid);
+      setGameState(data.gameState || 'waitingRoom');
+      listenToSession(saved.code);
+    };
+    reconnect().catch(() => {});
+    return () => { cancelled = true; };
+  }, [listenToSession]);
+
   /* Create / Join / Return */
   const handleCreateSession = async () => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const code = Array.from(
+      crypto.getRandomValues(new Uint8Array(6)),
+      byte => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[byte % 32]
+    ).join('');
+    const user = await ensureSignedIn();
+    if (!user) { showNotification('Could not establish a secure session.', '⚠️'); return; }
     const hostPlayer = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+      id: user.uid,
       name: playerName,
       isHost: true,
       joinedAt: new Date().toISOString(),
     };
     const ok = await createFirebaseSession(code, hostPlayer);
-    if (!ok) { alert('Failed to create session. Please try again.'); return; }
+    if (!ok) { showNotification('Failed to create the room. Please try again.', '⚠️'); return; }
     setSessionCode(code);
+    try { localStorage.setItem('overshare-session', JSON.stringify({ code })); } catch {}
+    playerIdRef.current = user.uid;
+    setPlayerId(user.uid);
     setIsHost(true);
     setPlayers([hostPlayer]);
     listenToSession(code);
@@ -776,25 +828,31 @@ export default function Overshare() {
   const handleJoinSession = async () => {
     const code = (sessionCode || '').trim().toUpperCase();
     if (!code) return;
+    const user = await ensureSignedIn();
+    if (!user) { showNotification('Could not establish a secure session.', '⚠️'); return; }
     const sessionRef = doc(db, 'sessions', code);
     const snap = await getDoc(sessionRef);
-    if (!snap.exists()) { alert('Session not found. Check the code and try again.'); return; }
+    if (!snap.exists()) { showNotification('Room not found. Check the code and try again.', '⚠️'); return; }
     const data = snap.data() || {};
-    const alreadyIn = (data.players || []).some((p) => p?.name === playerName);
+    const alreadyIn = (data.players || []).some((p) => p?.id === user.uid);
     if (!alreadyIn) {
       const newPlayer = {
-        id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+        id: user.uid,
         name: playerName,
         isHost: false,
         joinedAt: new Date().toISOString(),
       };
-      try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
-      catch {
-        const fresh = (await getDoc(sessionRef)).data() || {};
-        const updated = [...(fresh.players || []), newPlayer];
-        await updateDoc(sessionRef, { players: updated });
-      }
+      await updateDoc(sessionRef, {
+        players: arrayUnion(newPlayer),
+        participantUids: arrayUnion(user.uid),
+      });
     }
+    await updateDoc(sessionRef, {
+      [`preferencesByPlayer.${user.uid}`]: preferences,
+    });
+    playerIdRef.current = user.uid;
+    setPlayerId(user.uid);
+    try { localStorage.setItem('overshare-session', JSON.stringify({ code })); } catch {}
     setIsHost(false);
     listenToSession(code);
     setGameState('waitingRoom');
@@ -802,10 +860,41 @@ export default function Overshare() {
   };
 
   const returnToLobby = async () => {
+    setShowReturnConfirmation(true);
+  };
+
+  const confirmReturnToLobby = async () => {
     if (!sessionCode) return;
-    if (!confirm('Return everyone to the lobby? Current round will be left.')) return;
     await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingRoom' });
+    setShowReturnConfirmation(false);
     setGameState('waitingRoom');
+  };
+
+  const saveRelationships = async (nextRelationships) => {
+    if (!sessionCode || !playerId) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    await updateDoc(sessionRef, {
+      [`relationshipProfiles.${playerId}`]: nextRelationships,
+      [`relationshipsReady.${playerId}`]: true,
+    });
+    setRelationships(nextRelationships);
+    setGameState('relationshipWaiting');
+  };
+
+  const continueAfterRelationships = async () => {
+    if (!sessionCode || !isHost) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    await runTransaction(db, async transaction => {
+      const snapshot = await transaction.get(sessionRef);
+      if (!snapshot.exists()) throw new Error('Session no longer exists.');
+      const data = snapshot.data();
+      const everyoneReady = (data.players || []).every(player => data.relationshipsReady?.[player.id]);
+      if (!everyoneReady) throw new Error('Waiting for every player.');
+      transaction.update(sessionRef, {
+        groupProfile: buildGroupProfile(data.preferencesByPlayer),
+        gameState: 'mpModeSelect',
+      });
+    });
   };
 
   /* Classic helpers */
@@ -1197,8 +1286,25 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
 
       {/* floating background picker on the left */}
       <ThemePicker value={bgTheme} onChange={setBgTheme} />
+      <ConfirmReturnModal />
     </>
   );
+
+  const ConfirmReturnModal = () => {
+    if (!showReturnConfirmation) return null;
+    return (
+      <div className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setShowReturnConfirmation(false); }}>
+        <div className="overshare-panel w-full max-w-sm p-6" role="alertdialog" aria-modal="true" aria-labelledby="return-title" aria-describedby="return-description">
+          <h2 id="return-title" className="text-xl font-extrabold mb-2">Return everyone to the lobby?</h2>
+          <p id="return-description" className="text-gray-600 dark:text-gray-300 mb-6">The current round will end for everyone in this room.</p>
+          <div className="flex gap-3">
+            <button type="button" className="overshare-button-secondary flex-1" onClick={() => setShowReturnConfirmation(false)}>Stay here</button>
+            <button type="button" className="overshare-button-primary flex-1" onClick={confirmReturnToLobby}>Return</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   function ThemePicker({ value, onChange }) {
     const [open, setOpen] = useState(false);
@@ -1361,7 +1467,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           </div>
 
           <button
-            onClick={() => { if (!playerName.trim()) return; setGameState('modeSelect'); try { playSound('click'); } catch {} }}
+            onClick={() => { if (!playerName.trim()) return; persistProfile(); setGameState('preferences'); try { playSound('click'); } catch {} }}
             disabled={!playerName.trim()}
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -1369,6 +1475,21 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           </button>
         </div>
       </div>
+    );
+  }
+
+  if (gameState === 'preferences') {
+    return (
+      <PreferenceQuestionnaire
+        initialValue={preferences}
+        onBack={() => setGameState('welcome')}
+        onComplete={(nextPreferences) => {
+          setPreferences(nextPreferences);
+          persistProfile(nextPreferences);
+          setGameState('modeSelect');
+          try { playSound('success'); } catch {}
+        }}
+      />
     );
   }
 
@@ -1592,7 +1713,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
 
   // Waiting room
   if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find((p) => p?.name === playerName);
+    const isNewPlayer = !players.find((p) => p?.id === playerId);
     return (
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
@@ -1605,8 +1726,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           <div className="mb-3">
             <button
               onClick={async () => {
-                try { await navigator.clipboard.writeText(sessionCode); alert('Session code copied!'); }
-                catch { alert('Could not copy. Long-press / select to copy.'); }
+                try { await navigator.clipboard.writeText(sessionCode); showNotification('Room code copied!', '📋'); }
+                catch { showNotification('Could not copy. Select the code manually.', '⚠️'); }
               }}
               className="px-3 py-1 text-sm rounded-lg border bg-white/80 dark:bg-gray-800/80"
             >
@@ -1620,8 +1741,10 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             <button
               onClick={async () => {
                 try { playSound('click'); } catch {}
+                const user = await ensureSignedIn();
+                if (!user) return;
                 const newPlayer = {
-                  id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+                  id: user.uid,
                   name: playerName,
                   isHost: false,
                   joinedAt: new Date().toISOString(),
@@ -1629,12 +1752,12 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
                 const sessionRef = doc(db, 'sessions', sessionCode);
                 const snap = await getDoc(sessionRef);
                 if (snap.exists()) {
-                  try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
-                  catch {
-                    const data = snap.data() || {};
-                    const updated = [...(data.players || []), newPlayer];
-                    await updateDoc(sessionRef, { players: updated });
-                  }
+                  await updateDoc(sessionRef, {
+                    players: arrayUnion(newPlayer),
+                    participantUids: arrayUnion(user.uid),
+                  });
+                  playerIdRef.current = user.uid;
+                  setPlayerId(user.uid);
                   try { playSound('success'); } catch {}
                 }
               }}
@@ -1649,8 +1772,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               onClick={async () => {
                 if (!sessionCode) return;
                 try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'mpModeSelect' });
-                setGameState('mpModeSelect');
+                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'relationshipSurvey' });
+                setGameState('relationshipSurvey');
               }}
               disabled={players.length < 2}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1663,6 +1786,38 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             <p className="text-gray-500 dark:text-gray-300">Waiting for host to continue…</p>
           )}
         </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'relationshipSurvey') {
+    return (
+      <RelationshipQuestionnaire
+        players={players}
+        currentPlayerId={playerId}
+        initialValue={relationships}
+        onComplete={saveRelationships}
+      />
+    );
+  }
+
+  if (gameState === 'relationshipWaiting') {
+    const readyCount = players.filter(player => relationshipsReady[player.id]).length;
+    const everyoneReady = players.length > 0 && readyCount === players.length;
+    return (
+      <div className="min-h-screen overshare-backdrop flex items-center justify-center p-4">
+        <main className="overshare-panel w-full max-w-md p-8 text-center">
+          <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+          <h1 className="text-3xl font-extrabold tracking-tight mb-2">Finding your sweet spot</h1>
+          <p className="text-gray-600 dark:text-gray-300 mb-6">{readyCount} of {players.length} players are ready. Individual answers stay private.</p>
+          {isHost && everyoneReady ? (
+            <button type="button" onClick={continueAfterRelationships} className="overshare-button-primary w-full">Choose a game</button>
+          ) : (
+            <div className="h-2 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+              <div className="h-full overshare-gradient transition-all" style={{ width: `${players.length ? (readyCount / players.length) * 100 : 0}%` }} />
+            </div>
+          )}
+        </main>
       </div>
     );
   }
@@ -1762,20 +1917,21 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     };
 
     const handleCategoryVote = async (selectedCats) => {
-      if (!sessionCode) return;
+      if (!sessionCode || !playerId) return;
       const sessionRef = doc(db, 'sessions', sessionCode);
-      const snap = await getDoc(sessionRef);
-      if (!snap.exists()) return;
-      const data = snap.data() || {};
-      const currentVotes = { ...(data.categoryVotes || {}) };
-      currentVotes[playerName] = selectedCats;
-      await updateDoc(sessionRef, { categoryVotes: currentVotes });
+      await runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(sessionRef);
+        if (!snapshot.exists()) throw new Error('Session no longer exists.');
+        const data = snapshot.data();
+        const currentVotes = { ...(data.categoryVotes || {}), [playerId]: selectedCats };
+        const everyoneVoted = (data.players || []).every(player => (currentVotes[player.id] || []).length > 0);
+        transaction.update(sessionRef, {
+          categoryVotes: currentVotes,
+          ...(everyoneVoted ? { gameState: 'waitingForHost' } : {}),
+        });
+      });
       setHasVotedCategories(true);
       try { playSound('success'); } catch {}
-      if ((data.players || []).every(p => (currentVotes[p?.name] || []).length > 0)) {
-        await updateDoc(sessionRef, { gameState: 'waitingForHost' });
-        setGameState('waitingForHost');
-      }
     };
 
     return (
@@ -1930,7 +2086,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               </>
             ) : (
               <>
-                <h2 className="text-2xl font-bold mb-2">{currentPlayer?.name}'s Turn</h2>
+                <h2 className="text-2xl font-bold mb-2">{currentPlayer?.name}&apos;s Turn</h2>
                 <p className="text-gray-600 dark:text-gray-300">{currentPlayer?.name} is choosing a category…</p>
               </>
             )}
@@ -2017,7 +2173,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             )}
 
             <h2 className="text-lg font-semibold mb-2">
-              {currentPlayer?.name || 'Player'}'s Question
+              {currentPlayer?.name || 'Player'}&apos;s Question
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">
               Round {round} • Turn {turn} of {players.length || 1}
@@ -2176,6 +2332,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             </div>
 
             <FillCollectView
+              key={`${party.prompt}-${party.tiebreak || 0}`}
               party={party}
               players={players}
               playerName={playerName}
@@ -2220,6 +2377,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             </div>
 
             <SuperVoteView
+              key={`${party.prompt}-${party.tiebreak || 0}`}
               party={party}
               players={players}
               playerName={playerName}
@@ -2266,6 +2424,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             </div>
 
             <NhiCollectView
+              key={`${party.prompt}-${party.tiebreak || 0}`}
               party={party}
               players={players}
               playerName={playerName}
