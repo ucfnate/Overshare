@@ -1,5 +1,9 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  test: { environment: 'node', coverage: { reporter: ['text', 'json-summary'] } },
+  test: {
+    environment: 'node',
+    include: ['lib/**/*.test.js'],
+    coverage: { reporter: ['text', 'json-summary'] },
+  },
 });
