@@ -6,8 +6,9 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata = {
   title: 'Overshare - Personalized Conversation Games',
   description: 'Personalized conversation games that bring people closer together',
-  viewport: 'width=device-width, initial-scale=1',
 }
+
+export const viewport = { width: 'device-width', initialScale: 1, themeColor: '#7542e8' }
 
 export default function RootLayout({ children }) {
   return (

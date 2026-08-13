@@ -7,20 +7,25 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rules": "XDG_CONFIG_HOME=/tmp/overshare-firebase-config FIREBASE_EMULATORS_PATH=/tmp/overshare-firebase-emulators FIREBASE_CLI_DISABLE_UPDATE_CHECK=1 npm_config_cache=/tmp/overshare-npm-cache npx --yes firebase-tools@15.26.0 emulators:exec --only firestore --project overshare-rules-test \"node --test tests/firestore.rules.test.mjs\""
   },
   "dependencies": {
-    "next": "^14.2.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "firebase": "^10.12.0",
-    "lucide-react": "^0.400.0"
+    "firebase": "^12.0.0",
+    "lucide-react": "^0.468.0",
+    "next": "^16.3.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "tailwindcss": "^3.4.0",
+    "@firebase/rules-unit-testing": "^5.0.0",
     "autoprefixer": "^10.4.19",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.3.0",
     "postcss": "^8.4.38",
-    "eslint": "^8.57.0",
-    "eslint-config-next": "^14.2.0"
+    "tailwindcss": "^3.4.0",
+    "vitest": "^3.2.0"
   }
 }

@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 
 // Firebase helpers (your /lib/firebase must export these)
-import { db, listenToAlerts, pushAlert } from '../lib/firebase';
+import { db, ensureSignedIn, listenToAlerts, pushAlert } from '../lib/firebase';
 import {
   doc,
   setDoc,
@@ -35,12 +35,16 @@ import {
   onSnapshot,
   serverTimestamp,
   arrayUnion,
+  runTransaction,
 } from 'firebase/firestore';
+import PreferenceQuestionnaire from '../components/PreferenceQuestionnaire';
+import RelationshipQuestionnaire from '../components/RelationshipQuestionnaire';
+import { DEFAULT_PREFERENCES } from '../lib/preferences';
 
 // External prompt libraries (in /lib)
-import * as nhieImport from '../lib/nhie.js';
-import * as superImport from '../lib/superlatives.js';
-import * as fillImport from '../lib/fillin.js';
+import { nhiePrompts } from '../lib/nhie.js';
+import { superlativesPrompts } from '../lib/superlatives.js';
+import { fillInPrompts } from '../lib/fillin.js';
 
 // Category library (in /lib) — used for Classic mode
 import {
@@ -51,20 +55,9 @@ import {
 /* =========================================================
    External prompt normalization
 ========================================================= */
-const EXT_NHI =
-  Array.isArray(nhieImport.nhiePrompts) ? nhieImport.nhiePrompts :
-  Array.isArray(nhieImport.nhie) ? nhieImport.nhie :
-  Array.isArray(nhieImport.default) ? nhieImport.default : [];
-
-const EXT_SUPER =
-  Array.isArray(superImport.superlativesPrompts) ? superImport.superlativesPrompts :
-  Array.isArray(superImport.superlatives) ? superImport.superlatives :
-  Array.isArray(superImport.default) ? superImport.default : [];
-
-const EXT_FILL =
-  Array.isArray(fillImport.fillInPrompts) ? fillImport.fillInPrompts :
-  Array.isArray(fillImport.fillin) ? fillImport.fillin :
-  Array.isArray(fillImport.default) ? fillImport.default : [];
+const EXT_NHI = Array.isArray(nhiePrompts) ? nhiePrompts : [];
+const EXT_SUPER = Array.isArray(superlativesPrompts) ? superlativesPrompts : [];
+const EXT_FILL = Array.isArray(fillInPrompts) ? fillInPrompts : [];
 
 // Remote-friendly filter (removes “on your left/right”, etc.)
 const remoteSafe = (s) => typeof s === 'string' && !/on your (left|right)/i.test(s);
@@ -127,20 +120,21 @@ function FillCollectView({
   party,
   players,
   playerName,
+  playerId,
   turnOwner,
+  turnOwnerId,
   isTurnOwner,
   onSubmitAnswer,
   onMarkDone,
   onPickFavorite,
 }) {
   const [draft, setDraft] = useState('');
-  useEffect(() => { setDraft(''); }, [party?.prompt]);
 
-  const mySubs = (party?.submissions?.[playerName] || []);
-  const myDone = !!party?.done?.[playerName];
-  const nonTurn = (players || []).filter(p => p.name !== turnOwner);
+  const mySubs = (party?.submissions?.[playerId] || []);
+  const myDone = !!party?.done?.[playerId];
+  const nonTurn = (players || []).filter(p => p.id !== turnOwnerId);
   const allDone = nonTurn.length > 0 && nonTurn.every(p =>
-    party?.done?.[p.name] || (party?.submissions?.[p.name] || []).length > 0
+    party?.done?.[p.id] || (party?.submissions?.[p.id] || []).length > 0
   );
 
   return (
@@ -209,10 +203,9 @@ function FillCollectView({
 }
 
 // Superlatives — two-step vote (choose -> submit)
-function SuperVoteView({ party, players, playerName, onSubmitVote }) {
-  const [choice, setChoice] = useState(party?.votes?.[playerName] || '');
-  useEffect(() => { setChoice(party?.votes?.[playerName] || ''); }, [party?.prompt, party?.tiebreak]);
-  const myVoteSubmitted = !!party?.votes?.[playerName];
+function SuperVoteView({ party, players, playerId, onSubmitVote }) {
+  const [choice, setChoice] = useState(party?.votes?.[playerId] || '');
+  const myVoteSubmitted = !!party?.votes?.[playerId];
 
   return (
     <>
@@ -253,13 +246,12 @@ function SuperVoteView({ party, players, playerName, onSubmitVote }) {
 }
 
 // NHI — players submit “I have / I haven’t”
-function NhiCollectView({ party, players, playerName, turnOwner, isTurnOwner, onSubmitMyAnswer }) {
+function NhiCollectView({ party, players, playerId, turnOwnerId, turnOwner, isTurnOwner, onSubmitMyAnswer }) {
   const [local, setLocal] = useState(null);
-  const myAnsOnServer = party?.nhiAnswers?.[playerName];
-  const others = (players || []).filter(p => p.name !== turnOwner);
-  const allSubmitted = others.length > 0 && others.every(p => party?.nhiAnswers?.[p.name] !== undefined);
+  const myAnsOnServer = party?.nhiAnswers?.[playerId];
+  const others = (players || []).filter(p => p.id !== turnOwnerId);
+  const allSubmitted = others.length > 0 && others.every(p => party?.nhiAnswers?.[p.id] !== undefined);
 
-  useEffect(() => { setLocal(null); }, [party?.prompt]);
 
   return (
     <>
@@ -337,14 +329,14 @@ function NhiGuessView({ party, players, turnOwner, isTurnOwner, onConfirmGuesses
               <span className="font-medium">{p.name}</span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => setGuessMap(m => ({ ...m, [p.name]: true }))}
-                  className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.name] === true ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-300 dark:border-gray-600'}`}
+                  onClick={() => setGuessMap(m => ({ ...m, [p.id]: true }))}
+                  className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.id] === true ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-300 dark:border-gray-600'}`}
                 >
                   Has
                 </button>
                 <button
-                  onClick={() => setGuessMap(m => ({ ...m, [p.name]: false }))}
-                  className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.name] === false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600'}`}
+                  onClick={() => setGuessMap(m => ({ ...m, [p.id]: false }))}
+                  className={`px-3 py-1 rounded-lg border-2 ${guessMap[p.id] === false ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600'}`}
                 >
                   Hasn’t
                 </button>
@@ -376,6 +368,10 @@ export default function Overshare() {
   const [playerName, setPlayerName] = useState('');
   const [sessionCode, setSessionCode] = useState('');
   const [isHost, setIsHost] = useState(false);
+  const [playerId, setPlayerId] = useState('');
+  const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
+  const [relationships, setRelationships] = useState({});
+  const [relationshipsReady, setRelationshipsReady] = useState({});
 
   const [appMode, setAppMode] = useState(null); // 'solo' | 'multi'
   const [mpMode, setMpMode] = useState(null);   // 'classic' | 'party'
@@ -411,6 +407,7 @@ export default function Overshare() {
   const [notification, setNotification] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showScores, setShowScores] = useState(false);
+  const [showReturnConfirmation, setShowReturnConfirmation] = useState(false);
 
   // Background themes
   const BG_THEMES = {
@@ -425,11 +422,27 @@ export default function Overshare() {
   const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
   useEffect(() => { try { const saved = localStorage.getItem('bgTheme'); if (saved) setBgTheme(saved); } catch {} }, []);
   useEffect(() => { try { localStorage.setItem('bgTheme', bgTheme); } catch {} }, [bgTheme]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('overshare-profile') || 'null');
+      if (saved?.name) setPlayerName(saved.name);
+      if (saved?.preferences) setPreferences({ ...DEFAULT_PREFERENCES, ...saved.preferences });
+    } catch {}
+  }, []);
+
+  const persistProfile = useCallback((nextPreferences = preferences) => {
+    try { localStorage.setItem('overshare-profile', JSON.stringify({ name: playerName.trim(), preferences: nextPreferences })); } catch {}
+  }, [playerName, preferences]);
 
   // Refs
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
+  const gameStateRef = useRef(gameState);
+  const playerIdRef = useRef(playerId);
+  const superResolutionRef = useRef('');
+  gameStateRef.current = gameState;
+  playerIdRef.current = playerId;
 
   /* Category library + fallbacks */
   const iconMap = useMemo(
@@ -575,13 +588,21 @@ export default function Overshare() {
 
   // Alerts listener (per-player toasts)
   useEffect(() => {
-    if (!sessionCode || !playerName || typeof listenToAlerts !== 'function') return;
-    const unsub = listenToAlerts(sessionCode, playerName, ({ type, message }) => {
+    if (!sessionCode || !playerId || typeof listenToAlerts !== 'function') return;
+    const unsub = listenToAlerts(sessionCode, playerId, ({ type, message }) => {
       showNotification(message, type === 'success' ? '✅' : '🔔');
       try { playSound('success'); } catch {}
     });
     return () => unsub && unsub();
-  }, [sessionCode, playerName]);
+  }, [sessionCode, playerId]);
+
+  // Each player records only their own vote. The host advances the shared room
+  // after every ballot arrives, which avoids one client's stale map overwriting another's.
+  useEffect(() => {
+    if (!isHost || gameState !== 'categoryVoting' || !sessionCode || players.length === 0) return;
+    if (!players.every(player => (categoryVotes[player.id] || []).length > 0)) return;
+    updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingForHost' }).catch(() => {});
+  }, [categoryVotes, gameState, isHost, players, sessionCode]);
 
   /* Questions & prompts (external-first, remote-safe) */
   const SUPERLATIVES = useMemo(() => {
@@ -649,6 +670,7 @@ export default function Overshare() {
     try {
       await setDoc(doc(db, 'sessions', code), {
         hostId: hostPlayer.id,
+        participantUids: [hostPlayer.id],
         players: [hostPlayer],
         mode: null,
         gameState: 'waitingRoom',
@@ -661,9 +683,16 @@ export default function Overshare() {
         usedCategories: [],
         turnHistory: [],
         categoryVotes: {},
+        preferencesReady: { [hostPlayer.id]: true },
+        relationshipsReady: {},
         party: null,
         createdAt: serverTimestamp(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
+      await setDoc(doc(db, 'sessions', code, 'privateProfiles', hostPlayer.id), {
+        preferences,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
       return true;
     } catch (err) {
       console.error('Error creating session:', err);
@@ -708,6 +737,7 @@ export default function Overshare() {
         setUsedCategories([...(data.usedCategories || [])]);
         setTurnHistory([...(data.turnHistory || [])]);
         setCategoryVotes(data.categoryVotes || {});
+        setRelationshipsReady(data.relationshipsReady || {});
         setMpMode(data.mode || null);
         setParty(data.party || null);
 
@@ -724,9 +754,12 @@ export default function Overshare() {
         }
 
         // state transitions
-        const incomingRaw = data.gameState || 'waitingRoom';
+        const incomingRaw = data.gameState === 'relationshipSurvey' && data.relationshipsReady?.[playerIdRef.current]
+          ? 'relationshipWaiting'
+          : (data.gameState || 'waitingRoom');
         const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
-        if (incoming !== gameState) {
+        if (incoming !== gameStateRef.current) {
+          gameStateRef.current = incoming;
           setGameState(incoming);
           if (incoming === 'playing') { try { playSound('success'); } catch {} }
           else if (incoming === 'categoryPicking' || incoming === 'party_setup' || incoming === 'party_active') {
@@ -744,7 +777,7 @@ export default function Overshare() {
 
     unsubscribeRef.current = unsubscribe;
     return unsubscribe;
-  }, [playerName, gameState]);
+  }, [playerName]);
 
   useEffect(() => {
     return () => {
@@ -753,18 +786,50 @@ export default function Overshare() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const reconnect = async () => {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem('overshare-session') || 'null'); } catch { return; }
+      if (!saved?.code) return;
+      const user = await ensureSignedIn();
+      if (!user || cancelled) return;
+      const snapshot = await getDoc(doc(db, 'sessions', saved.code));
+      const data = snapshot.exists() ? snapshot.data() : null;
+      const player = data?.players?.find(candidate => candidate.id === user.uid);
+      if (!player || cancelled) return;
+      playerIdRef.current = user.uid;
+      setPlayerId(user.uid);
+      setPlayerName(player.name);
+      setSessionCode(saved.code);
+      setIsHost(data.hostId === user.uid);
+      setGameState(data.gameState || 'waitingRoom');
+      listenToSession(saved.code);
+    };
+    reconnect().catch(() => {});
+    return () => { cancelled = true; };
+  }, [listenToSession]);
+
   /* Create / Join / Return */
   const handleCreateSession = async () => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const code = Array.from(
+      crypto.getRandomValues(new Uint8Array(6)),
+      byte => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[byte % 32]
+    ).join('');
+    const user = await ensureSignedIn();
+    if (!user) { showNotification('Could not establish a secure session.', '⚠️'); return; }
     const hostPlayer = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+      id: user.uid,
       name: playerName,
       isHost: true,
       joinedAt: new Date().toISOString(),
     };
     const ok = await createFirebaseSession(code, hostPlayer);
-    if (!ok) { alert('Failed to create session. Please try again.'); return; }
+    if (!ok) { showNotification('Failed to create the room. Please try again.', '⚠️'); return; }
     setSessionCode(code);
+    try { localStorage.setItem('overshare-session', JSON.stringify({ code })); } catch {}
+    playerIdRef.current = user.uid;
+    setPlayerId(user.uid);
     setIsHost(true);
     setPlayers([hostPlayer]);
     listenToSession(code);
@@ -776,25 +841,33 @@ export default function Overshare() {
   const handleJoinSession = async () => {
     const code = (sessionCode || '').trim().toUpperCase();
     if (!code) return;
+    const user = await ensureSignedIn();
+    if (!user) { showNotification('Could not establish a secure session.', '⚠️'); return; }
     const sessionRef = doc(db, 'sessions', code);
     const snap = await getDoc(sessionRef);
-    if (!snap.exists()) { alert('Session not found. Check the code and try again.'); return; }
+    if (!snap.exists()) { showNotification('Room not found. Check the code and try again.', '⚠️'); return; }
     const data = snap.data() || {};
-    const alreadyIn = (data.players || []).some((p) => p?.name === playerName);
+    const alreadyIn = (data.players || []).some((p) => p?.id === user.uid);
     if (!alreadyIn) {
       const newPlayer = {
-        id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+        id: user.uid,
         name: playerName,
         isHost: false,
         joinedAt: new Date().toISOString(),
       };
-      try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
-      catch {
-        const fresh = (await getDoc(sessionRef)).data() || {};
-        const updated = [...(fresh.players || []), newPlayer];
-        await updateDoc(sessionRef, { players: updated });
-      }
+      await updateDoc(sessionRef, {
+        players: arrayUnion(newPlayer),
+        participantUids: arrayUnion(user.uid),
+        [`preferencesReady.${user.uid}`]: true,
+      });
     }
+    await setDoc(doc(db, 'sessions', code, 'privateProfiles', user.uid), {
+      preferences,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    playerIdRef.current = user.uid;
+    setPlayerId(user.uid);
+    try { localStorage.setItem('overshare-session', JSON.stringify({ code })); } catch {}
     setIsHost(false);
     listenToSession(code);
     setGameState('waitingRoom');
@@ -802,10 +875,39 @@ export default function Overshare() {
   };
 
   const returnToLobby = async () => {
+    setShowReturnConfirmation(true);
+  };
+
+  const confirmReturnToLobby = async () => {
     if (!sessionCode) return;
-    if (!confirm('Return everyone to the lobby? Current round will be left.')) return;
     await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'waitingRoom' });
+    setShowReturnConfirmation(false);
     setGameState('waitingRoom');
+  };
+
+  const saveRelationships = async (nextRelationships) => {
+    if (!sessionCode || !playerId) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    await setDoc(doc(db, 'sessions', sessionCode, 'privateProfiles', playerId), {
+      relationships: nextRelationships,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    await updateDoc(sessionRef, { [`relationshipsReady.${playerId}`]: true });
+    setRelationships(nextRelationships);
+    setGameState('relationshipWaiting');
+  };
+
+  const continueAfterRelationships = async () => {
+    if (!sessionCode || !isHost) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    await runTransaction(db, async transaction => {
+      const snapshot = await transaction.get(sessionRef);
+      if (!snapshot.exists()) throw new Error('Session no longer exists.');
+      const data = snapshot.data();
+      const everyoneReady = (data.players || []).every(player => data.relationshipsReady?.[player.id]);
+      if (!everyoneReady) throw new Error('Waiting for every player.');
+      transaction.update(sessionRef, { gameState: 'mpModeSelect' });
+    });
   };
 
   /* Classic helpers */
@@ -899,6 +1001,8 @@ export default function Overshare() {
     return { type, prompt, nextUsed };
   };
 
+  const uidForName = (name) => players.find(player => player.name === name)?.id || '';
+
   const startPartyMode = async () => {
     if (!sessionCode) return;
     await updateDoc(doc(db, 'sessions', sessionCode), {
@@ -981,25 +1085,22 @@ export default function Overshare() {
   // Fill: submit / done / pick favorite (+alert to winner)
   const submitFillAnswer = async (text) => {
     if (!sessionCode || !party) return;
-    const me = playerName;
-    const turnPlayer = players[party.turnIndex]?.name;
+    const me = playerId;
+    const turnPlayer = players[party.turnIndex]?.id;
     if (me === turnPlayer) return;
     const trimmed = (text || '').trim();
     if (!trimmed) return;
-    const cur = { ...(party.submissions || {}) };
-    const mine = [...(cur[me] || [])];
+    const mine = [...(party.submissions?.[me] || [])];
     if (mine.length >= 2) return;
-    mine.push({ id: `${Date.now()}_${Math.random().toString(36).slice(2,6)}`, by: me, text: trimmed });
-    cur[me] = mine;
-    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.submissions': cur });
+    mine.push({ id: crypto.randomUUID(), by: me, text: trimmed });
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.submissions.${me}`]: mine });
     showNotification('Answer submitted', '✍️');
   };
 
   const markFillDone = async () => {
     if (!sessionCode || !party) return;
-    const me = playerName;
-    const done = { ...(party.done || {}), [me]: true };
-    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.done': done });
+    const me = playerId;
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.done.${me}`]: true });
   };
 
   const hostPickFavorite = async (answerId) => {
@@ -1009,8 +1110,10 @@ export default function Overshare() {
     if (!picked) return;
 
     const scores = { ...(party.scores || {}) };
-    scores[picked.by] = (scores[picked.by] || 0) + 1;
-    const winnerIndex = Math.max(0, players.findIndex(p => p.name === picked.by));
+    const winnerPlayer = players.find(player => player.id === picked.by);
+    if (!winnerPlayer) return;
+    scores[winnerPlayer.name] = (scores[winnerPlayer.name] || 0) + 1;
+    const winnerIndex = Math.max(0, players.findIndex(p => p.id === picked.by));
 
     // per-player alert (“your answer was picked”)
     if (typeof pushAlert === 'function') {
@@ -1022,7 +1125,7 @@ export default function Overshare() {
     const next = {
       ...party,
       state: 'reveal',
-      winner: picked.by,
+      winner: winnerPlayer.name,
       scores,
       nextTurnIndex: winnerIndex,
       round: (party.round || 1) + 1,
@@ -1030,14 +1133,23 @@ export default function Overshare() {
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
   };
 
-  // Superlatives: submit vote, auto-tally; tiebreak → new prompt
+  // Superlatives: each client writes only its own ballot. The turn owner tallies.
   const submitSuperVote = async (voteForName) => {
     if (!sessionCode || !party) return;
-    const votes = { ...(party.votes || {}), [playerName]: voteForName };
-    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.votes': votes });
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.votes.${playerId}`]: voteForName });
+  };
 
-    const everyoneVoted = players.length > 0 && players.every(p => votes[p.name]);
-    if (everyoneVoted) {
+  useEffect(() => {
+    const votes = party?.votes || {};
+    const isTurnOwner = players[party?.turnIndex]?.id === playerId;
+    const everyoneVoted = players.length > 0 && players.every(player => votes[player.id]);
+    if (!sessionCode || party?.state !== 'vote_super' || !isTurnOwner || !everyoneVoted) return;
+
+    const resolutionKey = `${party.round}:${party.prompt}:${Object.keys(votes).sort().join(',')}`;
+    if (superResolutionRef.current === resolutionKey) return;
+    superResolutionRef.current = resolutionKey;
+
+    const resolveVotes = async () => {
       const tally = {};
       Object.values(votes).forEach(name => { tally[name] = (tally[name] || 0) + 1; });
       const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
@@ -1065,10 +1177,11 @@ export default function Overshare() {
         // alert winner, and optionally voters who picked winner
         if (typeof pushAlert === 'function') {
           try {
-            await pushAlert(sessionCode, winner, `🏆 You won “${party.prompt}” +1`, 'success');
-            for (const [voter, target] of Object.entries(votes)) {
-              if (target === winner && voter !== winner) {
-                await pushAlert(sessionCode, voter, `👍 Nice pick — ${winner} won that round.`, 'info');
+            const winnerUid = players.find(player => player.name === winner)?.id || '';
+            if (winnerUid) await pushAlert(sessionCode, winnerUid, `🏆 You won “${party.prompt}” +1`, 'success');
+            for (const [voterUid, target] of Object.entries(votes)) {
+              if (target === winner && voterUid !== winnerUid) {
+                await pushAlert(sessionCode, voterUid, `👍 Nice pick — ${winner} won that round.`, 'info');
               }
             }
           } catch {}
@@ -1084,17 +1197,18 @@ export default function Overshare() {
         };
         await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
       }
-    }
-  };
+    };
+
+    resolveVotes().catch(() => { superResolutionRef.current = ''; });
+  }, [party, playerId, players, sessionCode, SUPERLATIVES]);
 
   // NHI: player submit
   const submitNhiAnswer = async (hasDone) => {
     if (!sessionCode || !party) return;
-    const me = playerName;
-    const turnPlayer = players[party.turnIndex]?.name;
+    const me = playerId;
+    const turnPlayer = players[party.turnIndex]?.id;
     if (me === turnPlayer) return;
-    const ans = { ...(party.nhiAnswers || {}), [me]: !!hasDone };
-    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.nhiAnswers': ans });
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.nhiAnswers.${me}`]: !!hasDone });
   };
 
   const startNhiGuessing = async () => {
@@ -1111,21 +1225,22 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   let hostPoints = 0;
 
   // Use for...of so we can use await safely inside the loop
-  for (const [name, has] of Object.entries(actual)) {
-    const guess = guessesMap[name];
+  for (const [uid, has] of Object.entries(actual)) {
+    const guess = guessesMap[uid];
     if (guess === undefined) continue;
 
     const correct = (guess && has) || (!guess && !has);
     if (correct) {
       hostPoints += 1;
-      scores[name] = (scores[name] || 0) + 1; // player point for being guessed correctly
+      const participant = players.find(player => player.id === uid);
+      if (participant) scores[participant.name] = (scores[participant.name] || 0) + 1;
 
       if (typeof pushAlert === 'function') {
         try {
           const owner = players[party.turnIndex]?.name;
           await pushAlert(
             sessionCode,
-            name,
+            uid,
             `✨ ${owner} guessed you ${has ? 'have' : "haven't"} — +1`,
             'success'
           );
@@ -1139,9 +1254,10 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     scores[owner] = (scores[owner] || 0) + hostPoints;
     if (typeof pushAlert === 'function') {
       try {
-        await pushAlert(
+        const ownerUid = uidForName(owner);
+        if (ownerUid) await pushAlert(
           sessionCode,
-          owner,
+          ownerUid,
           `🧠 You guessed ${hostPoints} correctly (+${hostPoints})`,
           'success'
         );
@@ -1197,8 +1313,25 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
 
       {/* floating background picker on the left */}
       <ThemePicker value={bgTheme} onChange={setBgTheme} />
+      <ConfirmReturnModal />
     </>
   );
+
+  const ConfirmReturnModal = () => {
+    if (!showReturnConfirmation) return null;
+    return (
+      <div className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setShowReturnConfirmation(false); }}>
+        <div className="overshare-panel w-full max-w-sm p-6" role="alertdialog" aria-modal="true" aria-labelledby="return-title" aria-describedby="return-description">
+          <h2 id="return-title" className="text-xl font-extrabold mb-2">Return everyone to the lobby?</h2>
+          <p id="return-description" className="text-gray-600 dark:text-gray-300 mb-6">The current round will end for everyone in this room.</p>
+          <div className="flex gap-3">
+            <button type="button" className="overshare-button-secondary flex-1" onClick={() => setShowReturnConfirmation(false)}>Stay here</button>
+            <button type="button" className="overshare-button-primary flex-1" onClick={confirmReturnToLobby}>Return</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   function ThemePicker({ value, onChange }) {
     const [open, setOpen] = useState(false);
@@ -1361,7 +1494,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           </div>
 
           <button
-            onClick={() => { if (!playerName.trim()) return; setGameState('modeSelect'); try { playSound('click'); } catch {} }}
+            onClick={() => { if (!playerName.trim()) return; persistProfile(); setGameState('preferences'); try { playSound('click'); } catch {} }}
             disabled={!playerName.trim()}
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -1369,6 +1502,21 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           </button>
         </div>
       </div>
+    );
+  }
+
+  if (gameState === 'preferences') {
+    return (
+      <PreferenceQuestionnaire
+        initialValue={preferences}
+        onBack={() => setGameState('welcome')}
+        onComplete={(nextPreferences) => {
+          setPreferences(nextPreferences);
+          persistProfile(nextPreferences);
+          setGameState('modeSelect');
+          try { playSound('success'); } catch {}
+        }}
+      />
     );
   }
 
@@ -1592,7 +1740,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
 
   // Waiting room
   if (gameState === 'waitingRoom') {
-    const isNewPlayer = !players.find((p) => p?.name === playerName);
+    const isNewPlayer = !players.find((p) => p?.id === playerId);
     return (
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
@@ -1605,8 +1753,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           <div className="mb-3">
             <button
               onClick={async () => {
-                try { await navigator.clipboard.writeText(sessionCode); alert('Session code copied!'); }
-                catch { alert('Could not copy. Long-press / select to copy.'); }
+                try { await navigator.clipboard.writeText(sessionCode); showNotification('Room code copied!', '📋'); }
+                catch { showNotification('Could not copy. Select the code manually.', '⚠️'); }
               }}
               className="px-3 py-1 text-sm rounded-lg border bg-white/80 dark:bg-gray-800/80"
             >
@@ -1620,8 +1768,10 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             <button
               onClick={async () => {
                 try { playSound('click'); } catch {}
+                const user = await ensureSignedIn();
+                if (!user) return;
                 const newPlayer = {
-                  id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+                  id: user.uid,
                   name: playerName,
                   isHost: false,
                   joinedAt: new Date().toISOString(),
@@ -1629,12 +1779,17 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
                 const sessionRef = doc(db, 'sessions', sessionCode);
                 const snap = await getDoc(sessionRef);
                 if (snap.exists()) {
-                  try { await updateDoc(sessionRef, { players: arrayUnion(newPlayer) }); }
-                  catch {
-                    const data = snap.data() || {};
-                    const updated = [...(data.players || []), newPlayer];
-                    await updateDoc(sessionRef, { players: updated });
-                  }
+                  await updateDoc(sessionRef, {
+                    players: arrayUnion(newPlayer),
+                    participantUids: arrayUnion(user.uid),
+                    [`preferencesReady.${user.uid}`]: true,
+                  });
+                  await setDoc(doc(db, 'sessions', sessionCode, 'privateProfiles', user.uid), {
+                    preferences,
+                    updatedAt: serverTimestamp(),
+                  }, { merge: true });
+                  playerIdRef.current = user.uid;
+                  setPlayerId(user.uid);
                   try { playSound('success'); } catch {}
                 }
               }}
@@ -1649,8 +1804,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               onClick={async () => {
                 if (!sessionCode) return;
                 try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'mpModeSelect' });
-                setGameState('mpModeSelect');
+                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'relationshipSurvey' });
+                setGameState('relationshipSurvey');
               }}
               disabled={players.length < 2}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1663,6 +1818,38 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             <p className="text-gray-500 dark:text-gray-300">Waiting for host to continue…</p>
           )}
         </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'relationshipSurvey') {
+    return (
+      <RelationshipQuestionnaire
+        players={players}
+        currentPlayerId={playerId}
+        initialValue={relationships}
+        onComplete={saveRelationships}
+      />
+    );
+  }
+
+  if (gameState === 'relationshipWaiting') {
+    const readyCount = players.filter(player => relationshipsReady[player.id]).length;
+    const everyoneReady = players.length > 0 && readyCount === players.length;
+    return (
+      <div className="min-h-screen overshare-backdrop flex items-center justify-center p-4">
+        <main className="overshare-panel w-full max-w-md p-8 text-center">
+          <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+          <h1 className="text-3xl font-extrabold tracking-tight mb-2">Finding your sweet spot</h1>
+          <p className="text-gray-600 dark:text-gray-300 mb-6">{readyCount} of {players.length} players are ready. Individual answers stay private.</p>
+          {isHost && everyoneReady ? (
+            <button type="button" onClick={continueAfterRelationships} className="overshare-button-primary w-full">Choose a game</button>
+          ) : (
+            <div className="h-2 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+              <div className="h-full overshare-gradient transition-all" style={{ width: `${players.length ? (readyCount / players.length) * 100 : 0}%` }} />
+            </div>
+          )}
+        </main>
       </div>
     );
   }
@@ -1762,20 +1949,11 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     };
 
     const handleCategoryVote = async (selectedCats) => {
-      if (!sessionCode) return;
+      if (!sessionCode || !playerId) return;
       const sessionRef = doc(db, 'sessions', sessionCode);
-      const snap = await getDoc(sessionRef);
-      if (!snap.exists()) return;
-      const data = snap.data() || {};
-      const currentVotes = { ...(data.categoryVotes || {}) };
-      currentVotes[playerName] = selectedCats;
-      await updateDoc(sessionRef, { categoryVotes: currentVotes });
+      await updateDoc(sessionRef, { [`categoryVotes.${playerId}`]: selectedCats });
       setHasVotedCategories(true);
       try { playSound('success'); } catch {}
-      if ((data.players || []).every(p => (currentVotes[p?.name] || []).length > 0)) {
-        await updateDoc(sessionRef, { gameState: 'waitingForHost' });
-        setGameState('waitingForHost');
-      }
     };
 
     return (
@@ -1930,7 +2108,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               </>
             ) : (
               <>
-                <h2 className="text-2xl font-bold mb-2">{currentPlayer?.name}'s Turn</h2>
+                <h2 className="text-2xl font-bold mb-2">{currentPlayer?.name}&apos;s Turn</h2>
                 <p className="text-gray-600 dark:text-gray-300">{currentPlayer?.name} is choosing a category…</p>
               </>
             )}
@@ -2017,7 +2195,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             )}
 
             <h2 className="text-lg font-semibold mb-2">
-              {currentPlayer?.name || 'Player'}'s Question
+              {currentPlayer?.name || 'Player'}&apos;s Question
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-300 mb-4">
               Round {round} • Turn {turn} of {players.length || 1}
@@ -2161,7 +2339,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   // Active party round
   if (gameState === 'party_active' && party) {
     const turnOwner = players[party.turnIndex]?.name;
-    const iAmTurnOwner = playerName === turnOwner;
+    const turnOwnerId = players[party.turnIndex]?.id;
+    const iAmTurnOwner = playerId === turnOwnerId;
 
     // Fill
     if (party.state === 'collect_fill') {
@@ -2176,10 +2355,13 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             </div>
 
             <FillCollectView
+              key={`${party.prompt}-${party.tiebreak || 0}`}
               party={party}
               players={players}
               playerName={playerName}
+              playerId={playerId}
               turnOwner={turnOwner}
+              turnOwnerId={turnOwnerId}
               isTurnOwner={iAmTurnOwner}
               onSubmitAnswer={submitFillAnswer}
               onMarkDone={markFillDone}
@@ -2220,9 +2402,10 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             </div>
 
             <SuperVoteView
+              key={`${party.prompt}-${party.tiebreak || 0}`}
               party={party}
               players={players}
-              playerName={playerName}
+              playerId={playerId}
               onSubmitVote={submitSuperVote}
             />
 
@@ -2253,8 +2436,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
 
     // NHI collect
     if (party.state === 'collect_nhi') {
-      const others = players.filter(p => p.name !== turnOwner);
-      const allSubmitted = others.length > 0 && others.every(p => party.nhiAnswers?.[p.name] !== undefined);
+      const others = players.filter(p => p.id !== turnOwnerId);
+      const allSubmitted = others.length > 0 && others.every(p => party.nhiAnswers?.[p.id] !== undefined);
       return (
         <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
           <TopBar />
@@ -2266,9 +2449,11 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             </div>
 
             <NhiCollectView
+              key={`${party.prompt}-${party.tiebreak || 0}`}
               party={party}
               players={players}
-              playerName={playerName}
+              playerId={playerId}
+              turnOwnerId={turnOwnerId}
               turnOwner={turnOwner}
               isTurnOwner={iAmTurnOwner}
               onSubmitMyAnswer={submitNhiAnswer}
@@ -2320,7 +2505,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               party={party}
               players={players}
               turnOwner={players[party.turnIndex]?.name}
-              isTurnOwner={playerName === players[party.turnIndex]?.name}
+              isTurnOwner={playerId === players[party.turnIndex]?.id}
               onConfirmGuesses={hostSubmitNhiGuesses}
             />
 
