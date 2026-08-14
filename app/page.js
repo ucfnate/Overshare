@@ -411,12 +411,12 @@ export default function Overshare() {
 
   // Background themes
   const BG_THEMES = {
-    sunset: 'bg-gradient-to-br from-purple-600 via-pink-600 to-orange-500',
-    ocean:  'bg-gradient-to-br from-sky-600 via-cyan-500 to-emerald-500',
-    dusk:   'bg-gradient-to-br from-indigo-700 via-purple-700 to-fuchsia-600',
-    vapor:  'bg-gradient-to-br from-rose-400 via-fuchsia-500 to-indigo-500',
-    slate:  'bg-gradient-to-br from-slate-700 via-slate-800 to-black',
-    plain:  'bg-gray-100 dark:bg-gray-900',
+    sunset: 'bg-gradient-to-br from-[#302044] via-[#70408b] to-[#c75278]',
+    ocean:  'bg-gradient-to-br from-[#12364a] via-[#176b77] to-[#39a58a]',
+    dusk:   'bg-gradient-to-br from-[#171b3d] via-[#41316f] to-[#8a3c77]',
+    vapor:  'bg-gradient-to-br from-[#733f67] via-[#a8567b] to-[#e48273]',
+    slate:  'bg-gradient-to-br from-[#111827] via-[#25283a] to-[#3d354c]',
+    plain:  'bg-[#eee8df] dark:bg-[#17121c]',
   };
   const [bgTheme, setBgTheme] = useState('sunset');
   const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
@@ -1470,17 +1470,18 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   // Welcome
   if (gameState === 'welcome') {
     return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
+      <div className={`min-h-screen ${bgClass} overshare-app-shell flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
         <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <div className="mb-6">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full mb-4">
+        <main className="overshare-panel p-7 sm:p-9 max-w-md w-full text-center">
+          <div className="mb-8">
+            <div className="overshare-brand-mark mb-6">
               <MessageCircle className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-3xl font-bold mb-2">Overshare</h1>
-            <p className="text-gray-600 dark:text-gray-300">Personalized conversation games that bring people closer together</p>
+            <span className="overshare-kicker block mb-3">Conversation, remixed</span>
+            <h1 className="overshare-display mb-4">Overshare</h1>
+            <p className="text-lg text-gray-600 dark:text-gray-300 leading-relaxed">Questions matched to your people, your mood, and the time you have.</p>
           </div>
 
           <div className="mb-6">
@@ -1489,18 +1490,18 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               placeholder="Enter your name"
               value={playerName}
               onChange={(e) => setPlayerName(e.target.value)}
-              className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+              className="overshare-input text-center text-lg"
             />
           </div>
 
           <button
             onClick={() => { if (!playerName.trim()) return; persistProfile(); setGameState('preferences'); try { playSound('click'); } catch {} }}
             disabled={!playerName.trim()}
-            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="overshare-button-primary w-full text-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Let’s Get Started
           </button>
-        </div>
+        </main>
       </div>
     );
   }
@@ -1523,30 +1524,31 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   // Mode select
   if (gameState === 'modeSelect') {
     return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
+      <div className={`min-h-screen ${bgClass} overshare-app-shell flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
         <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold mb-6">How do you want to play today, {playerName}?</h2>
+        <main className="overshare-panel p-7 sm:p-8 max-w-md w-full text-center">
+          <span className="overshare-kicker block mb-3">Choose your format</span>
+          <h2 className="text-3xl font-black tracking-tight mb-7">How do you want to play, {playerName}?</h2>
 
           <div className="space-y-4">
             <button
               onClick={() => { setAppMode('solo'); setGameState('soloSetup'); try { playSound('click'); } catch {} }}
-              className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-4 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all"
+              className="overshare-mode-card w-full bg-white/80 dark:bg-white/5 text-purple-700 dark:text-purple-200 font-extrabold text-lg"
             >
               Solo Quickstart (one device)
             </button>
 
             <button
               onClick={() => { setAppMode('multi'); setGameState('createOrJoin'); try { playSound('click'); } catch {} }}
-              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all flex items-center justify-center"
+              className="overshare-button-primary w-full text-lg flex items-center justify-center"
             >
               <Users className="w-5 h-5 mr-2" />
               Multiplayer
             </button>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -1555,10 +1557,10 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   if (gameState === 'soloSetup') {
     const entries = Object.entries(CATEGORIES || {});
     return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
+      <div className={`min-h-screen ${bgClass} overshare-app-shell flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+        <main className="overshare-panel p-7 sm:p-8 max-w-md w-full">
           <h2 className="text-2xl font-bold mb-4">Pick your categories</h2>
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">Use your library. You can skip questions you don’t like.</p>
           <div className="space-y-3 mb-6">
@@ -1614,7 +1616,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           >
             Back
           </button>
-        </div>
+        </main>
       </div>
     );
   }
@@ -1641,10 +1643,10 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     };
 
     return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
+      <div className={`min-h-screen ${bgClass} overshare-app-shell flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+        <main className="overshare-panel p-7 sm:p-8 max-w-md w-full">
           <div className="mb-4">
             <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">Category</div>
             <div className="flex flex-wrap gap-2">
@@ -1686,7 +1688,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           >
             Back
           </button>
-        </div>
+        </main>
       </div>
     );
   }
@@ -1694,12 +1696,13 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   // Create / Join (multiplayer)
   if (gameState === 'createOrJoin') {
     return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
+      <div className={`min-h-screen ${bgClass} overshare-app-shell flex items-center justify-center p-4`}>
         <TopBar />
         <HelpModal />
         <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold mb-6">Ready to play, {playerName}!</h2>
+        <main className="overshare-panel p-7 sm:p-8 max-w-md w-full text-center">
+          <span className="overshare-kicker block mb-3">Bring your people</span>
+          <h2 className="text-3xl font-black tracking-tight mb-7">Start a room or join one.</h2>
 
           <div className="space-y-4">
             <button
@@ -1722,7 +1725,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
                 placeholder="Enter session code"
                 value={sessionCode}
                 onChange={(e) => setSessionCode(e.target.value.toUpperCase())}
-                className="w-full p-3 border-2 border-gray-200 dark:border-gray-600 rounded-xl focus:border-purple-500 focus:outline-none text-center text-lg font-mono bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                className="overshare-input text-center text-lg font-mono tracking-[.2em] uppercase"
               />
               <button
                 onClick={() => { try { playSound('click'); } catch {}; handleJoinSession(); }}
@@ -1733,7 +1736,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               </button>
             </div>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
@@ -1742,12 +1745,13 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   if (gameState === 'waitingRoom') {
     const isNewPlayer = !players.find((p) => p?.id === playerId);
     return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
+      <div className={`min-h-screen ${bgClass} overshare-app-shell flex items-center justify-center p-4`}>
         <TopBar />
         <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
+        <main className="overshare-panel p-7 sm:p-8 max-w-md w-full text-center">
           <div className="mb-2">
-            <h2 className="text-2xl font-bold mb-2">Lobby {sessionCode}</h2>
+            <span className="overshare-kicker block mb-2">Your room is ready</span>
+            <h2 className="text-4xl font-black tracking-[.12em] mb-2">{sessionCode}</h2>
             <p className="text-gray-600 dark:text-gray-300">Share this code to join</p>
           </div>
           <div className="mb-3">
@@ -1817,7 +1821,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           {!isHost && !isNewPlayer && (
             <p className="text-gray-500 dark:text-gray-300">Waiting for host to continue…</p>
           )}
-        </div>
+        </main>
       </div>
     );
   }
