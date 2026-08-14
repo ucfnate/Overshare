@@ -13,6 +13,7 @@
     "test:rules": "XDG_CONFIG_HOME=/tmp/overshare-firebase-config FIREBASE_EMULATORS_PATH=/tmp/overshare-firebase-emulators FIREBASE_CLI_DISABLE_UPDATE_CHECK=1 npm_config_cache=/tmp/overshare-npm-cache npx --yes firebase-tools@15.26.0 emulators:exec --only firestore --project overshare-rules-test \"node --test tests/firestore.rules.test.mjs\""
   },
   "dependencies": {
+    "@vercel/speed-insights": "^2.0.0",
     "firebase": "^12.0.0",
     "lucide-react": "^0.468.0",
     "next": "^16.3.0",
@@ -26,6 +27,7 @@
     "eslint-config-next": "^16.3.0",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.0",
+    "typescript": "^6.0.3",
     "vitest": "^3.2.0"
   }
 }
