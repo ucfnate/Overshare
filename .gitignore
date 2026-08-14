@@ -21,6 +21,7 @@ coverage/
 # Vercel / Firebase
 .vercel/
 .firebase/
+firestore-debug.log
 
 # Env files (keep a .env.example tracked)
 .env

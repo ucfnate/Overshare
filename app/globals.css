@@ -3,137 +3,158 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
+  color-scheme: light dark;
+  --ink: #25152f;
+  --plum: #5d2b72;
+  --violet: #8058e8;
+  --coral: #ff806d;
+  --sun: #ffd166;
+  --paper: #fffaf5;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
-  }
-
-  /* Override white backgrounds in dark mode */
-  .bg-white {
-    background-color: rgb(31, 41, 55) !important; /* gray-800 */
-  }
-
-  /* Override dark text colors in dark mode */
-  .text-gray-800 {
-    color: rgb(243, 244, 246) !important; /* gray-100 */
-  }
-
-  .text-gray-600 {
-    color: rgb(156, 163, 175) !important; /* gray-400 */
-  }
-
-  .text-gray-500 {
-    color: rgb(156, 163, 175) !important; /* gray-400 */
-  }
-
-  /* Override light backgrounds */
-  .bg-gray-50 {
-    background-color: rgb(55, 65, 81) !important; /* gray-700 */
-  }
-
-  .bg-gray-100 {
-    background-color: rgb(55, 65, 81) !important; /* gray-700 */
-  }
-
-  /* Override border colors */
-  .border-gray-200 {
-    border-color: rgb(75, 85, 99) !important; /* gray-600 */
-  }
-
-  .border-gray-300 {
-    border-color: rgb(75, 85, 99) !important; /* gray-600 */
-  }
-
-  /* Override hover states */
-  .hover\:bg-purple-50:hover {
-    background-color: rgb(55, 65, 81) !important; /* gray-700 */
-  }
-
-  .hover\:bg-gray-50:hover {
-    background-color: rgb(55, 65, 81) !important; /* gray-700 */
-  }
-
-  /* Override gradient backgrounds for question boxes */
-  .from-purple-50 {
-    --tw-gradient-from: rgb(55, 65, 81) !important; /* gray-700 */
-  }
-
-  .to-pink-50 {
-    --tw-gradient-to: rgb(55, 65, 81) !important; /* gray-700 */
-  }
-
-  /* Override input and form elements */
-  input {
-    background-color: rgb(55, 65, 81) !important; /* gray-700 */
-    color: rgb(243, 244, 246) !important; /* gray-100 */
-    border-color: rgb(75, 85, 99) !important; /* gray-600 */
-  }
-
-  input::placeholder {
-    color: rgb(156, 163, 175) !important; /* gray-400 */
-  }
-
-  input:focus {
-    border-color: rgb(147, 51, 234) !important; /* purple-600 */
-    background-color: rgb(55, 65, 81) !important; /* gray-700 */
-    color: rgb(243, 244, 246) !important; /* gray-100 */
-  }
-
-  /* Override any remaining white text that should be visible */
-  .text-white {
-    color: rgb(243, 244, 246) !important; /* Keep white text visible */
-  }
-}
+* { box-sizing: border-box; }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  min-height: 100vh;
+  margin: 0;
+  background: #f8f5fa;
+  color: #24172f;
+  font-feature-settings: "ss01" 1, "cv11" 1;
 }
 
-/* Custom scrollbar for better mobile experience */
-::-webkit-scrollbar {
-  width: 4px;
+button, input, select { font: inherit; }
+
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 3px solid #f59ac0;
+  outline-offset: 3px;
 }
 
-::-webkit-scrollbar-track {
-  background: #f1f1f1;
+.overshare-backdrop {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(255, 209, 102, .55), transparent 28%),
+    radial-gradient(circle at 88% 86%, rgba(255, 128, 109, .58), transparent 32%),
+    linear-gradient(145deg, #35204e, #70408b 52%, #b84d79);
+}
+
+.overshare-app-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background-color: #35204e;
+}
+
+.overshare-app-shell::before,
+.overshare-app-shell::after {
+  position: fixed;
+  z-index: -1;
+  width: 24rem;
+  height: 24rem;
+  border-radius: 999px;
+  content: "";
+  filter: blur(8px);
+  opacity: .55;
+  pointer-events: none;
+}
+
+.overshare-app-shell::before {
+  top: -10rem;
+  left: -7rem;
+  background: radial-gradient(circle, rgba(255, 209, 102, .9), transparent 68%);
+}
+
+.overshare-app-shell::after {
+  right: -9rem;
+  bottom: -11rem;
+  background: radial-gradient(circle, rgba(255, 128, 109, .9), transparent 68%);
+}
+
+.overshare-panel {
+  border: 1px solid rgba(255, 255, 255, .72);
+  border-radius: 2rem;
+  background: rgba(255, 250, 245, .94);
+  box-shadow: 0 30px 90px rgba(29, 10, 43, .34), inset 0 1px 0 rgba(255, 255, 255, .9);
+  backdrop-filter: blur(22px);
+  color: #24172f;
+}
+
+.overshare-gradient { background: linear-gradient(120deg, var(--violet), #d84f8c 62%, var(--coral)); }
+.overshare-kicker { color: #754090; font-size: .72rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+.overshare-button-primary, .overshare-button-secondary { border-radius: .9rem; padding: .85rem 1rem; font-weight: 800; transition: transform .15s ease, box-shadow .15s ease; }
+.overshare-button-primary { background: linear-gradient(120deg, #6740d8, #d84f8c 64%, #ef7464); color: white; box-shadow: 0 12px 30px rgba(112, 64, 139, .26); }
+.overshare-button-secondary { background: #eee8f1; color: #4a3852; }
+.overshare-button-primary:not(:disabled):hover, .overshare-button-secondary:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(73, 40, 89, .16); }
+.preference-choice { min-height: 6.6rem; border: 1px solid #e2d7e6; border-radius: 1.1rem; background: #fff; padding: 1rem; text-align: left; color: #2b1c32; transition: border-color .15s ease, background .15s ease; }
+.preference-choice-selected { border: 2px solid #7a45e6; padding: calc(1rem - 1px); background: #f5efff; }
+.topic-pill { border: 1px solid #d7cbdc; border-radius: 999px; background: rgba(255, 255, 255, .86); padding: .55rem .9rem; color: #3a2942; font-size: .875rem; font-weight: 700; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
+.topic-pill:hover { border-color: #9b72e9; transform: translateY(-1px); }
+.topic-pill-selected { border-color: #7a45e6; background: #eee4ff; color: #5c2fbd; }
+
+.overshare-brand-mark {
+  display: inline-grid;
+  width: 4.5rem;
+  height: 4.5rem;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .55);
+  border-radius: 1.6rem;
+  background: linear-gradient(135deg, #6a46dc, #da518b 62%, #ff806d);
+  box-shadow: 0 18px 36px rgba(100, 45, 120, .3);
+  transform: rotate(-4deg);
+}
+
+.overshare-display {
+  font-size: clamp(2.7rem, 12vw, 4.3rem);
+  font-weight: 950;
+  letter-spacing: -.07em;
+  line-height: .95;
+}
+
+.overshare-input {
+  width: 100%;
+  border: 1px solid rgba(93, 43, 114, .2);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, .84);
+  padding: 1rem 1.1rem;
+  color: var(--ink);
+  box-shadow: inset 0 1px 3px rgba(67, 34, 78, .08);
+}
+
+.overshare-mode-card {
+  border: 1px solid rgba(107, 64, 135, .18);
+  border-radius: 1.25rem;
+  padding: 1.15rem;
+  text-align: left;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+
+.overshare-mode-card:hover {
+  border-color: rgba(128, 88, 232, .62);
+  box-shadow: 0 14px 30px rgba(58, 24, 73, .14);
+  transform: translateY(-2px);
+}
+
+/* Carry the refreshed glass-card language through legacy game views while
+   those screens are progressively split into smaller components. */
+.min-h-screen > .rounded-3xl.shadow-2xl {
+  border: 1px solid rgba(255, 255, 255, .72);
+  border-radius: 2rem;
+  background: rgba(255, 250, 245, .94);
+  box-shadow: 0 30px 90px rgba(29, 10, 43, .34), inset 0 1px 0 rgba(255, 255, 255, .9);
+  backdrop-filter: blur(22px);
 }
 
 @media (prefers-color-scheme: dark) {
-  ::-webkit-scrollbar-track {
-    background: #374151; /* gray-700 */
-  }
+  body { background: #17121c; color: #f8f4fb; }
+  .overshare-panel { border-color: rgba(255, 255, 255, .16); background: rgba(30, 20, 38, .93); color: #f8f4fb; box-shadow: 0 32px 100px rgba(8, 3, 12, .5), inset 0 1px 0 rgba(255, 255, 255, .1); }
+  .overshare-button-secondary { background: #342a3a; color: #f2eaf5; }
+  .preference-choice { border-color: #493a50; background: #241c29; color: #f8f4fb; }
+  .preference-choice-selected { border-color: #a982ff; background: #332544; }
+  .topic-pill { border-color: #493a50; background: #241c29; color: #f8f4fb; }
+  .topic-pill-selected { border-color: #a982ff; background: #3b2850; color: #d9c7ff; }
+  .overshare-input { border-color: rgba(255, 255, 255, .16); background: rgba(15, 10, 19, .72); color: #fff; }
+  .overshare-mode-card { border-color: rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .04); }
+  .min-h-screen > .rounded-3xl.shadow-2xl { border-color: rgba(255, 255, 255, .16); background: rgba(30, 20, 38, .93); box-shadow: 0 32px 100px rgba(8, 3, 12, .5), inset 0 1px 0 rgba(255, 255, 255, .1); }
 }
 
-::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 2px;
-}
-
-@media (prefers-color-scheme: dark) {
-  ::-webkit-scrollbar-thumb {
-    background: #6b7280; /* gray-500 */
-  }
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
-}
-
-@media (prefers-color-scheme: dark) {
-  ::-webkit-scrollbar-thumb:hover {
-    background: #9ca3af; /* gray-400 */
-  }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
