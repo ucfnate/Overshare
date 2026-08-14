@@ -83,6 +83,16 @@ describe('room access', () => {
     }));
   });
 
+  test('keeps the currently deployed join payload working during rollout', async () => {
+    const db = testEnv.authenticatedContext('legacy-uid').firestore();
+    const ref = doc(db, 'sessions', roomCode);
+    await assertSucceeds(updateDoc(ref, {
+      participantUids: [...room.participantUids, 'legacy-uid'],
+      players: [...room.players, { id: 'legacy-uid', name: 'Legacy', isHost: false }],
+      'preferencesReady.legacy-uid': true,
+    }));
+  });
+
   test('rejects adding somebody else as a participant', async () => {
     const db = testEnv.authenticatedContext('attacker-uid').firestore();
     await assertFails(updateDoc(doc(db, 'sessions', roomCode), {

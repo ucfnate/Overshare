@@ -46,10 +46,11 @@ service cloud.firestore {
         && request.resource.data.players[request.resource.data.players.size() - 1].isHost == false
         && request.resource.data.preferencesReady.diff(resource.data.preferencesReady)
           .affectedKeys().hasOnly([request.auth.uid])
-        && request.resource.data.preferencesReady[request.auth.uid] == false
-        && request.resource.data.relationshipsReady.diff(resource.data.relationshipsReady)
-          .affectedKeys().hasOnly([request.auth.uid])
-        && request.resource.data.relationshipsReady[request.auth.uid] == false;
+        && request.resource.data.preferencesReady[request.auth.uid] is bool
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['relationshipsReady'])
+          || (request.resource.data.relationshipsReady.diff(resource.data.relationshipsReady)
+            .affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.relationshipsReady[request.auth.uid] == false));
     }
 
     function changesOwnMap(mapName) {
