@@ -30,14 +30,16 @@ const room = {
   gameState: 'categoryVoting',
   currentTurnIndex: 0,
   currentQuestion: '',
+  currentQuestionId: '',
   currentCategory: '',
   currentQuestionAsker: '',
   availableCategories: [],
   usedCategories: [],
   turnHistory: [],
   categoryVotes: {},
-  preferencesReady: { 'host-uid': true, 'guest-uid': true },
-  relationshipsReady: {},
+  preferencesReady: { 'host-uid': false, 'guest-uid': false },
+  relationshipsReady: { 'host-uid': false, 'guest-uid': false },
+  groupProfile: {},
   party: null,
   createdAt: Timestamp.now(),
   expiresAt: Timestamp.fromMillis(Date.now() + 60 * 60 * 1000),
@@ -76,7 +78,8 @@ describe('room access', () => {
     await assertSucceeds(updateDoc(ref, {
       participantUids: [...room.participantUids, 'new-uid'],
       players: [...room.players, { id: 'new-uid', name: 'New', isHost: false }],
-      'preferencesReady.new-uid': true,
+      'preferencesReady.new-uid': false,
+      'relationshipsReady.new-uid': false,
     }));
   });
 
@@ -85,7 +88,8 @@ describe('room access', () => {
     await assertFails(updateDoc(doc(db, 'sessions', roomCode), {
       participantUids: [...room.participantUids, 'victim-uid'],
       players: [...room.players, { id: 'victim-uid', name: 'Victim', isHost: false }],
-      'preferencesReady.victim-uid': true,
+      'preferencesReady.victim-uid': false,
+      'relationshipsReady.victim-uid': false,
     }));
   });
 });
@@ -113,6 +117,37 @@ describe('multiplayer mutations', () => {
     const ref = doc(db, 'sessions', roomCode);
     await assertSucceeds(updateDoc(ref, { 'categoryVotes.guest-uid': ['icebreakers'] }));
     await assertFails(updateDoc(ref, { 'categoryVotes.host-uid': ['spicy'] }));
+  });
+
+  test('lets a player contribute one cautious aggregate without exposing answers', async () => {
+    const db = testEnv.authenticatedContext('guest-uid').firestore();
+    const ref = doc(db, 'sessions', roomCode);
+    await assertSucceeds(updateDoc(ref, {
+      'preferencesReady.guest-uid': true,
+      groupProfile: { depth: 'thoughtful', spice: 'none', topics: ['stories'], contributionCount: 1 },
+    }));
+    await assertFails(updateDoc(ref, {
+      'preferencesReady.host-uid': true,
+      groupProfile: { depth: 'vulnerable', spice: 'explicit', contributionCount: 2 },
+    }));
+  });
+
+  test('allows only a player’s own new party ballot', async () => {
+    await testEnv.withSecurityRulesDisabled(async context => {
+      await updateDoc(doc(context.firestore(), 'sessions', roomCode), {
+        party: {
+          turnIndex: 0,
+          state: 'vote_choice',
+          choiceVotes: {},
+          ownerGuesses: {},
+          anonymousGuesses: {},
+        },
+      });
+    });
+    const db = testEnv.authenticatedContext('guest-uid').firestore();
+    const ref = doc(db, 'sessions', roomCode);
+    await assertSucceeds(updateDoc(ref, { 'party.choiceVotes.guest-uid': 'Beach' }));
+    await assertFails(updateDoc(ref, { 'party.choiceVotes.host-uid': 'Mountains' }));
   });
 });
 

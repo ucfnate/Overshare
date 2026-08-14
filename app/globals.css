@@ -85,6 +85,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .overshare-button-primary:not(:disabled):hover, .overshare-button-secondary:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(73, 40, 89, .16); }
 .preference-choice { min-height: 6.6rem; border: 1px solid #e2d7e6; border-radius: 1.1rem; background: #fff; padding: 1rem; text-align: left; color: #2b1c32; transition: border-color .15s ease, background .15s ease; }
 .preference-choice-selected { border: 2px solid #7a45e6; padding: calc(1rem - 1px); background: #f5efff; }
+.topic-pill { border: 1px solid #d7cbdc; border-radius: 999px; background: rgba(255, 255, 255, .86); padding: .55rem .9rem; color: #3a2942; font-size: .875rem; font-weight: 700; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
+.topic-pill:hover { border-color: #9b72e9; transform: translateY(-1px); }
+.topic-pill-selected { border-color: #7a45e6; background: #eee4ff; color: #5c2fbd; }
 
 .overshare-brand-mark {
   display: inline-grid;
@@ -145,6 +148,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .overshare-button-secondary { background: #342a3a; color: #f2eaf5; }
   .preference-choice { border-color: #493a50; background: #241c29; color: #f8f4fb; }
   .preference-choice-selected { border-color: #a982ff; background: #332544; }
+  .topic-pill { border-color: #493a50; background: #241c29; color: #f8f4fb; }
+  .topic-pill-selected { border-color: #a982ff; background: #3b2850; color: #d9c7ff; }
   .overshare-input { border-color: rgba(255, 255, 255, .16); background: rgba(15, 10, 19, .72); color: #fff; }
   .overshare-mode-card { border-color: rgba(255, 255, 255, .14); background: rgba(255, 255, 255, .04); }
   .min-h-screen > .rounded-3xl.shadow-2xl { border-color: rgba(255, 255, 255, .16); background: rgba(30, 20, 38, .93); box-shadow: 0 32px 100px rgba(8, 3, 12, .5), inset 0 1px 0 rgba(255, 255, 255, .1); }

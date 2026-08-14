@@ -39,7 +39,18 @@ import {
 } from 'firebase/firestore';
 import PreferenceQuestionnaire from '../components/PreferenceQuestionnaire';
 import RelationshipQuestionnaire from '../components/RelationshipQuestionnaire';
-import { DEFAULT_PREFERENCES } from '../lib/preferences';
+import ExperiencePicker from '../components/ExperiencePicker';
+import QuickplaySetup from '../components/QuickplaySetup';
+import { DEFAULT_PREFERENCES, normalizePreferences } from '../lib/preferences';
+import { MULTIPLAYER_EXPERIENCES, QUICKPLAY_EXPERIENCES } from '../lib/experiences';
+import {
+  getTopicsForExperience,
+  mergeGroupProfile,
+  relationshipContextFrom,
+  selectQuestion,
+} from '../lib/questionEngine';
+import { DEFAULT_PARTY_ROTATION, PARTY_GAME_DEFINITIONS, choosePartyPrompt } from '../lib/partyGames';
+import { addRoundScores, scoreAnonymousGuesses, scoreCorrectGuesses, scoreMajorityVotes } from '../lib/partyScoring';
 
 // External prompt libraries (in /lib)
 import { nhiePrompts } from '../lib/nhie.js';
@@ -110,6 +121,20 @@ const Scoreboard = ({ scores = {}, inline = false }) => {
     </div>
   );
 };
+
+const RoundScoreboard = ({ players = [], scores = {} }) => (
+  <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 text-left mb-4">
+    <h4 className="font-semibold mb-2">Points this round</h4>
+    <ul className="space-y-1">
+      {players.map(player => (
+        <li key={player.id} className="flex justify-between">
+          <span>{player.name}</span>
+          <span className="font-bold">+{scores[player.name] || 0}</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+);
 
 /* =========================================================
    Party child components (isolated state = fewer hook issues)
@@ -359,6 +384,87 @@ function NhiGuessView({ party, players, turnOwner, isTurnOwner, onConfirmGuesses
   );
 }
 
+function ChoiceVoteView({ party, playerId, onSubmit }) {
+  const [choice, setChoice] = useState(party?.choiceVotes?.[playerId] || '');
+  const submitted = party?.choiceVotes?.[playerId] !== undefined;
+  return (
+    <>
+      <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 mb-4">
+        <p className="font-medium">{party.prompt}</p>
+      </div>
+      <div className="space-y-2">
+        {(party.options || []).map(option => (
+          <button key={option} type="button" disabled={submitted} onClick={() => setChoice(option)} className={`w-full p-3 rounded-xl border-2 text-left ${choice === option ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-600'}`}>
+            {option}
+          </button>
+        ))}
+      </div>
+      <button type="button" disabled={!choice || submitted} onClick={() => onSubmit(choice)} className="w-full mt-3 overshare-button-primary disabled:opacity-50">
+        {submitted ? 'Choice submitted ✓' : 'Lock in choice'}
+      </button>
+    </>
+  );
+}
+
+function OwnerChoiceView({ party, players, playerId, isTurnOwner, onOwnerAnswer, onGuess }) {
+  const [choice, setChoice] = useState('');
+  const submitted = isTurnOwner ? !!party.ownerAnswer : party.ownerGuesses?.[playerId] !== undefined;
+  return (
+    <>
+      <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 mb-4">
+        <p className="font-medium">{party.prompt}</p>
+      </div>
+      {party.state === 'owner_answer' && !isTurnOwner ? (
+        <p className="p-4 rounded-xl bg-gray-50 dark:bg-gray-700">The Hot Seat is answering privately…</p>
+      ) : (
+        <>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">{isTurnOwner ? 'Choose your real answer.' : `Predict ${players[party.turnIndex]?.name}’s answer.`}</p>
+          <div className="space-y-2">
+            {(party.options || []).map(option => <button key={option} type="button" disabled={submitted} onClick={() => setChoice(option)} className={`w-full p-3 rounded-xl border-2 text-left ${choice === option ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-600'}`}>{option}</button>)}
+          </div>
+          <button type="button" disabled={!choice || submitted} onClick={() => isTurnOwner ? onOwnerAnswer(choice) : onGuess(choice)} className="w-full mt-3 overshare-button-primary disabled:opacity-50">{submitted ? 'Submitted ✓' : 'Submit'}</button>
+        </>
+      )}
+    </>
+  );
+}
+
+function AnonymousView({ party, players, playerId, canStartGuessing, onSubmit, onStartGuessing, onSubmitGuesses }) {
+  const [draft, setDraft] = useState('');
+  const [guesses, setGuesses] = useState({});
+  const mine = party.submissions?.[playerId]?.[0];
+  const submissions = Object.values(party.submissions || {}).flat();
+  const allSubmitted = players.length > 0 && players.every(player => party.submissions?.[player.id]?.length);
+  if (party.state === 'collect_anonymous') {
+    return (
+      <>
+        <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-4 rounded-xl border-l-4 border-purple-500 mb-4"><p className="font-medium">{party.prompt}</p></div>
+        <input value={draft} disabled={!!mine} onChange={event => setDraft(event.target.value)} className="overshare-input" placeholder="Your anonymous answer…" />
+        <button type="button" disabled={!!mine || !draft.trim()} onClick={() => { onSubmit(draft); setDraft(''); }} className="w-full mt-3 overshare-button-primary disabled:opacity-50">{mine ? 'Answer submitted ✓' : 'Submit anonymously'}</button>
+        {allSubmitted && canStartGuessing ? <button type="button" onClick={onStartGuessing} className="w-full mt-3 overshare-button-secondary">Reveal answers and guess</button> : <p className="text-center text-sm mt-3 text-gray-500">{submissions.length} of {players.length} answers submitted</p>}
+      </>
+    );
+  }
+  const otherSubmissions = submissions.filter(item => item.by !== playerId);
+  const submitted = party.anonymousGuesses?.[playerId] !== undefined;
+  return (
+    <>
+      <div className="space-y-4">
+        {otherSubmissions.map(item => (
+          <div key={item.id} className="p-3 rounded-xl border-2 border-gray-200 dark:border-gray-600">
+            <p className="mb-2">“{item.text}”</p>
+            <select disabled={submitted} value={guesses[item.id] || ''} onChange={event => setGuesses(current => ({ ...current, [item.id]: event.target.value }))} className="overshare-input">
+              <option value="">Who wrote it?</option>
+              {players.filter(player => player.id !== playerId).map(player => <option key={player.id} value={player.id}>{player.name}</option>)}
+            </select>
+          </div>
+        ))}
+      </div>
+      <button type="button" disabled={submitted || otherSubmissions.some(item => !guesses[item.id])} onClick={() => onSubmitGuesses(guesses)} className="w-full mt-3 overshare-button-primary disabled:opacity-50">{submitted ? 'Guesses submitted ✓' : 'Submit guesses'}</button>
+    </>
+  );
+}
+
 /* =========================================================
    Main Component
 ========================================================= */
@@ -372,13 +478,17 @@ export default function Overshare() {
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [relationships, setRelationships] = useState({});
   const [relationshipsReady, setRelationshipsReady] = useState({});
+  const [preferencesReady, setPreferencesReady] = useState({});
+  const [experience, setExperience] = useState(null); // general | family | date | party
+  const [groupProfile, setGroupProfile] = useState({});
 
-  const [appMode, setAppMode] = useState(null); // 'solo' | 'multi'
+  const [appMode, setAppMode] = useState(null); // 'quickplay' | 'multi'
   const [mpMode, setMpMode] = useState(null);   // 'classic' | 'party'
 
   // Classic
   const [players, setPlayers] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState('');
+  const [currentQuestionId, setCurrentQuestionId] = useState('');
   const [currentCategory, setCurrentCategory] = useState('');
   const [selectedCategories, setSelectedCategories] = useState([]); // session-chosen set
   const [mySelectedCategories, setMySelectedCategories] = useState([]); // local voting picks
@@ -394,9 +504,10 @@ export default function Overshare() {
   const [party, setParty] = useState(null);
   const [showPartyExplainer, setShowPartyExplainer] = useState(false);
 
-  // Solo
+  // Quickplay
   const [soloCategories, setSoloCategories] = useState([]);
-  const [soloAsked, setSoloAsked] = useState([]);
+  const [quickplayConfig, setQuickplayConfig] = useState(null);
+  const [soloAsked, setSoloAsked] = useState([]); // question ids
   const [soloSkipsUsed, setSoloSkipsUsed] = useState(0);
   const soloMaxSkips = 3;
 
@@ -426,7 +537,7 @@ export default function Overshare() {
     try {
       const saved = JSON.parse(localStorage.getItem('overshare-profile') || 'null');
       if (saved?.name) setPlayerName(saved.name);
-      if (saved?.preferences) setPreferences({ ...DEFAULT_PREFERENCES, ...saved.preferences });
+      if (saved?.preferences) setPreferences(normalizePreferences(saved.preferences));
     } catch {}
   }, []);
 
@@ -438,11 +549,13 @@ export default function Overshare() {
   const unsubscribeRef = useRef(null);
   const prevTurnIndexRef = useRef(0);
   const audioCtxRef = useRef(null);
+  const audioEnabledRef = useRef(audioEnabled);
   const gameStateRef = useRef(gameState);
   const playerIdRef = useRef(playerId);
   const superResolutionRef = useRef('');
   gameStateRef.current = gameState;
   playerIdRef.current = playerId;
+  audioEnabledRef.current = audioEnabled;
 
   /* Category library + fallbacks */
   const iconMap = useMemo(
@@ -518,14 +631,24 @@ export default function Overshare() {
     return FALLBACK_CATEGORIES;
   }, [FALLBACK_CATEGORIES]);
 
+  const TOPICS = useMemo(() => {
+    const topics = getTopicsForExperience(experience || 'general');
+    return Object.fromEntries(Object.entries(topics).map(([key, topic]) => [key, {
+      ...topic,
+      name: topic.label,
+      icon: topic.icon || 'MessageCircle',
+      color: topic.color || 'from-purple-500 to-pink-500',
+    }]));
+  }, [experience]);
+
   const libraryOK = useMemo(() => {
     const usingFallback = CATEGORIES === FALLBACK_CATEGORIES;
     return typeof getRandomQImport === 'function' && !usingFallback;
   }, [CATEGORIES, FALLBACK_CATEGORIES]);
 
   /* Audio + toasts */
-  const getAudio = () => {
-    if (!audioEnabled) return null;
+  const getAudio = useCallback(() => {
+    if (!audioEnabledRef.current) return null;
     try {
       if (!audioCtxRef.current) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -536,9 +659,9 @@ export default function Overshare() {
     } catch {
       return null;
     }
-  };
+  }, []);
 
-  const playSound = (type) => {
+  const playSound = useCallback((type) => {
     try {
       const audio = getAudio();
       if (!audio) return;
@@ -578,13 +701,13 @@ export default function Overshare() {
 
       if (sounds[type]) sounds[type]();
     } catch {}
-  };
+  }, [getAudio]);
 
-  const showNotification = (message, emoji = '🎉') => {
+  const showNotification = useCallback((message, emoji = '🎉') => {
     setNotification({ message, emoji });
     window.clearTimeout((showNotification._t || 0));
     showNotification._t = window.setTimeout(() => setNotification(null), 3000);
-  };
+  }, []);
 
   // Alerts listener (per-player toasts)
   useEffect(() => {
@@ -594,7 +717,7 @@ export default function Overshare() {
       try { playSound('success'); } catch {}
     });
     return () => unsub && unsub();
-  }, [sessionCode, playerId]);
+  }, [playSound, playerId, sessionCode, showNotification]);
 
   // Each player records only their own vote. The host advances the shared room
   // after every ballot arrives, which avoids one client's stale map overwriting another's.
@@ -645,7 +768,7 @@ export default function Overshare() {
     return (EXT_NHI.length ? EXT_NHI : fallback).filter(remoteSafe);
   }, []);
 
-  const getQuestion = useCallback((categoryKey, exclude = []) => {
+  const getLegacyQuestion = useCallback((categoryKey, exclude = []) => {
     if (typeof getRandomQImport === 'function') {
       try {
         let tries = 8;
@@ -665,10 +788,28 @@ export default function Overshare() {
     return q;
   }, [CATEGORIES]);
 
+  const getQuestionRecord = useCallback((topic, usedIds = [], overrides = {}) => {
+    const activeExperience = overrides.experience || experience || 'general';
+    const activeProfile = overrides.profile || groupProfile || {};
+    const question = selectQuestion({
+      experience: activeExperience,
+      topics: topic ? [topic] : (activeProfile.topics || []),
+      depth: overrides.depth || activeProfile.depth || preferences.depth,
+      spice: overrides.spice || activeProfile.spice || preferences.spice,
+      excludedTopics: overrides.excludedTopics || activeProfile.excludedTopics || preferences.excludedTopics,
+      relationshipContext: overrides.relationshipContext || relationshipContextFrom(relationships),
+      usedQuestionIds: usedIds,
+    });
+    if (question) return question;
+    const text = getLegacyQuestion(topic, []);
+    return { id: `legacy-${topic}-${text}`, text, topic, depth: 'thoughtful', spice: 'none' };
+  }, [experience, getLegacyQuestion, groupProfile, preferences, relationships]);
+
   /* Firestore: session helpers */
   const createFirebaseSession = async (code, hostPlayer) => {
     try {
       await setDoc(doc(db, 'sessions', code), {
+        schemaVersion: 2,
         hostId: hostPlayer.id,
         participantUids: [hostPlayer.id],
         players: [hostPlayer],
@@ -683,16 +824,14 @@ export default function Overshare() {
         usedCategories: [],
         turnHistory: [],
         categoryVotes: {},
-        preferencesReady: { [hostPlayer.id]: true },
+        experience: null,
+        groupProfile: {},
+        preferencesReady: { [hostPlayer.id]: false },
         relationshipsReady: {},
         party: null,
         createdAt: serverTimestamp(),
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       });
-      await setDoc(doc(db, 'sessions', code, 'privateProfiles', hostPlayer.id), {
-        preferences,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
       return true;
     } catch (err) {
       console.error('Error creating session:', err);
@@ -731,6 +870,7 @@ export default function Overshare() {
         setPlayers([...(data.players || [])]);
         setCurrentTurnIndex(typeof data.currentTurnIndex === 'number' ? data.currentTurnIndex : 0);
         setCurrentQuestion(data.currentQuestion || '');
+        setCurrentQuestionId(data.currentQuestionId || '');
         setCurrentCategory(data.currentCategory || '');
         setCurrentQuestionAsker(data.currentQuestionAsker || '');
         setAvailableCategories([...(data.availableCategories || [])]);
@@ -738,6 +878,9 @@ export default function Overshare() {
         setTurnHistory([...(data.turnHistory || [])]);
         setCategoryVotes(data.categoryVotes || {});
         setRelationshipsReady(data.relationshipsReady || {});
+        setPreferencesReady(data.preferencesReady || {});
+        setExperience(data.experience || null);
+        setGroupProfile(data.groupProfile || {});
         setMpMode(data.mode || null);
         setParty(data.party || null);
 
@@ -754,9 +897,10 @@ export default function Overshare() {
         }
 
         // state transitions
-        const incomingRaw = data.gameState === 'relationshipSurvey' && data.relationshipsReady?.[playerIdRef.current]
-          ? 'relationshipWaiting'
-          : (data.gameState || 'waitingRoom');
+        let incomingRaw = data.gameState || 'waitingRoom';
+        if (incomingRaw === 'relationshipSurvey' && data.relationshipsReady?.[playerIdRef.current]) {
+          incomingRaw = data.preferencesReady?.[playerIdRef.current] ? 'conversationWaiting' : 'preferenceSurvey';
+        }
         const incoming = incomingRaw === 'waiting' ? 'waitingRoom' : incomingRaw;
         if (incoming !== gameStateRef.current) {
           gameStateRef.current = incoming;
@@ -777,7 +921,7 @@ export default function Overshare() {
 
     unsubscribeRef.current = unsubscribe;
     return unsubscribe;
-  }, [playerName]);
+  }, [playSound, playerName, showNotification]);
 
   useEffect(() => {
     return () => {
@@ -803,6 +947,7 @@ export default function Overshare() {
       setPlayerName(player.name);
       setSessionCode(saved.code);
       setIsHost(data.hostId === user.uid);
+      setExperience(data.experience || null);
       setGameState(data.gameState || 'waitingRoom');
       listenToSession(saved.code);
     };
@@ -858,13 +1003,10 @@ export default function Overshare() {
       await updateDoc(sessionRef, {
         players: arrayUnion(newPlayer),
         participantUids: arrayUnion(user.uid),
-        [`preferencesReady.${user.uid}`]: true,
+        [`preferencesReady.${user.uid}`]: false,
+        [`relationshipsReady.${user.uid}`]: false,
       });
     }
-    await setDoc(doc(db, 'sessions', code, 'privateProfiles', user.uid), {
-      preferences,
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
     playerIdRef.current = user.uid;
     setPlayerId(user.uid);
     try { localStorage.setItem('overshare-session', JSON.stringify({ code })); } catch {}
@@ -894,20 +1036,46 @@ export default function Overshare() {
     }, { merge: true });
     await updateDoc(sessionRef, { [`relationshipsReady.${playerId}`]: true });
     setRelationships(nextRelationships);
-    setGameState('relationshipWaiting');
+    setGameState('preferenceSurvey');
   };
 
-  const continueAfterRelationships = async () => {
+  const saveMultiplayerPreferences = async (nextPreferences) => {
+    if (!sessionCode || !playerId) return;
+    const sessionRef = doc(db, 'sessions', sessionCode);
+    const normalized = normalizePreferences(nextPreferences);
+    await setDoc(doc(db, 'sessions', sessionCode, 'privateProfiles', playerId), {
+      preferences: normalized,
+      relationships,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    await runTransaction(db, async transaction => {
+      const snapshot = await transaction.get(sessionRef);
+      if (!snapshot.exists()) throw new Error('Session no longer exists.');
+      const data = snapshot.data();
+      if (data.preferencesReady?.[playerId]) return;
+      transaction.update(sessionRef, {
+        groupProfile: mergeGroupProfile(data.groupProfile || {}, normalized),
+        [`preferencesReady.${playerId}`]: true,
+      });
+    });
+    setPreferences(normalized);
+    persistProfile(normalized);
+    setGameState('conversationWaiting');
+  };
+
+  const startConversationVoting = async () => {
     if (!sessionCode || !isHost) return;
     const sessionRef = doc(db, 'sessions', sessionCode);
     await runTransaction(db, async transaction => {
       const snapshot = await transaction.get(sessionRef);
       if (!snapshot.exists()) throw new Error('Session no longer exists.');
       const data = snapshot.data();
-      const everyoneReady = (data.players || []).every(player => data.relationshipsReady?.[player.id]);
+      const everyoneReady = (data.players || []).every(player => data.preferencesReady?.[player.id]);
       if (!everyoneReady) throw new Error('Waiting for every player.');
-      transaction.update(sessionRef, { gameState: 'mpModeSelect' });
+      transaction.update(sessionRef, { mode: 'classic', gameState: 'categoryVoting', categoryVotes: {} });
     });
+    setMySelectedCategories([]);
+    setHasVotedCategories(false);
   };
 
   /* Classic helpers */
@@ -923,12 +1091,13 @@ export default function Overshare() {
     if (!sessionCode) return;
     const currentPlayer = players[currentTurnIndex] || players[0];
     if (!currentPlayer) return;
-    const question = getQuestion(category, [currentQuestion]);
+    const question = getQuestionRecord(category, turnHistory.map(item => item.questionId).filter(Boolean));
     const newUsed = [...usedCategories, category];
     const newAvail = (availableCategories || []).filter((c) => c !== category);
-    const newHistory = [...turnHistory, { player: currentPlayer.name, category, question }];
+    const newHistory = [...turnHistory, { player: currentPlayer.name, category, question: question.text, questionId: question.id }];
     await updateDoc(doc(db, 'sessions', sessionCode), {
-      currentQuestion: question,
+      currentQuestion: question.text,
+      currentQuestionId: question.id,
       currentCategory: category,
       gameState: 'playing',
       usedCategories: newUsed,
@@ -950,9 +1119,10 @@ export default function Overshare() {
       (turnHistory[turnHistory.length - 1]?.category) ||
       (selectedCategories[0]) ||
       'icebreakers';
-    const newQuestion = getQuestion(forcedCategory, [currentQuestion]);
+    const newQuestion = getQuestionRecord(forcedCategory, [currentQuestionId, ...turnHistory.map(item => item.questionId)].filter(Boolean));
     await updateDoc(doc(db, 'sessions', sessionCode), {
-      currentQuestion: newQuestion,
+      currentQuestion: newQuestion.text,
+      currentQuestionId: newQuestion.id,
       currentCategory: forcedCategory,
     });
     setSkipsUsedThisTurn((n) => n + 1);
@@ -975,6 +1145,7 @@ export default function Overshare() {
       availableCategories: newAvailable,
       usedCategories: newUsed,
       currentQuestion: '',
+      currentQuestionId: '',
       currentCategory: '',
       currentQuestionAsker: '',
     });
@@ -982,23 +1153,30 @@ export default function Overshare() {
   };
 
   /* Party helpers */
-  // Choose type & prompt; avoid repeats by tracking party.usedPrompts
+  // Rotate across the enabled party games while avoiding repeated prompt ids.
   const partyChooseTypeAndPrompt = (roundNum, partyState) => {
-    const mod = ((roundNum || 1) - 1) % 3; // 1: fill, 2: super, 3: nhi
-    const type = mod === 0 ? 'fill' : mod === 1 ? 'super' : 'nhi';
-    const used = partyState?.usedPrompts || { fill: [], super: [], nhi: [] };
-    const source = type === 'fill' ? FILL_PROMPTS : type === 'super' ? SUPERLATIVES : NHI_PROMPTS;
+    const selected = choosePartyPrompt({
+      round: roundNum,
+      enabledTypes: partyState?.enabledTypes || DEFAULT_PARTY_ROTATION,
+      usedPromptIds: partyState?.usedPromptIds || [],
+    });
+    return {
+      type: selected.type,
+      prompt: selected.prompt,
+      options: selected.options || [],
+      promptId: selected.id,
+      nextUsed: [...(partyState?.usedPromptIds || []), selected.id].slice(-500),
+    };
+  };
 
-    // pick prompt not used in this mode yet (up to 20 tries)
-    let prompt = randomOf(source);
-    let tries = 20;
-    while (tries-- > 0 && (used[type] || []).includes(prompt)) {
-      prompt = randomOf(source);
-    }
-    // add to used
-    const nextUsed = { ...used, [type]: [...(used[type] || []), prompt].slice(-200) };
-
-    return { type, prompt, nextUsed };
+  const partyStateForType = type => {
+    if (['fill', 'hot_seat'].includes(type)) return 'collect_fill';
+    if (type === 'most_likely') return 'vote_super';
+    if (type === 'never_have_i_ever') return 'collect_nhi';
+    if (['majority', 'would_rather'].includes(type)) return 'vote_choice';
+    if (['know_me', 'family_trivia'].includes(type)) return 'owner_answer';
+    if (type === 'anonymous') return 'collect_anonymous';
+    return 'collect_fill';
   };
 
   const uidForName = (name) => players.find(player => player.name === name)?.id || '';
@@ -1021,10 +1199,18 @@ export default function Overshare() {
         nhiAnswers: {},
         guesses: {},
         scores: {},
+        roundScores: {},
         winner: null,
         tiebreak: 0,
         nextTurnIndex: 0,
-        usedPrompts: { fill: [], super: [], nhi: [] },
+        enabledTypes: DEFAULT_PARTY_ROTATION,
+        usedPromptIds: [],
+        promptId: '',
+        options: [],
+        choiceVotes: {},
+        ownerAnswer: '',
+        ownerGuesses: {},
+        anonymousGuesses: {},
       },
     });
     setMpMode('party');
@@ -1034,20 +1220,27 @@ export default function Overshare() {
   const hostStartPartyRound = async () => {
     if (!sessionCode || !party) return;
     const round = party.round || 1;
-    const { type, prompt, nextUsed } = partyChooseTypeAndPrompt(round, party);
+    const { type, prompt, options, promptId, nextUsed } = partyChooseTypeAndPrompt(round, party);
     const next = {
       ...party,
-      state: type === 'fill' ? 'collect_fill' : type === 'super' ? 'vote_super' : 'collect_nhi',
+      state: partyStateForType(type),
       type,
       prompt,
+      promptId,
+      options,
       submissions: {},
       done: {},
       votes: {},
       nhiAnswers: {},
       guesses: {},
+      choiceVotes: {},
+      ownerAnswer: '',
+      ownerGuesses: {},
+      anonymousGuesses: {},
+      roundScores: {},
       winner: null,
-      tiebreak: type === 'super' ? (party.tiebreak || 0) : 0,
-      usedPrompts: nextUsed,
+      tiebreak: type === 'most_likely' ? (party.tiebreak || 0) : 0,
+      usedPromptIds: nextUsed,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), { party: next, gameState: 'party_active' });
     setShowPartyExplainer(false);
@@ -1059,21 +1252,28 @@ export default function Overshare() {
     const iAmNext = players[party.nextTurnIndex]?.name === playerName;
     if (!iAmNext) return;
     const round = party.round || 2; // already incremented in reveal
-    const { type, prompt, nextUsed } = partyChooseTypeAndPrompt(round, party);
+    const { type, prompt, options, promptId, nextUsed } = partyChooseTypeAndPrompt(round, party);
     const next = {
       ...party,
-      state: type === 'fill' ? 'collect_fill' : type === 'super' ? 'vote_super' : 'collect_nhi',
+      state: partyStateForType(type),
       type,
       prompt,
+      promptId,
+      options,
       submissions: {},
       done: {},
       votes: {},
       nhiAnswers: {},
       guesses: {},
+      choiceVotes: {},
+      ownerAnswer: '',
+      ownerGuesses: {},
+      anonymousGuesses: {},
+      roundScores: {},
       winner: null,
-      tiebreak: type === 'super' ? (party.tiebreak || 0) : 0,
+      tiebreak: type === 'most_likely' ? (party.tiebreak || 0) : 0,
       turnIndex: party.nextTurnIndex,
-      usedPrompts: nextUsed,
+      usedPromptIds: nextUsed,
     };
     await updateDoc(doc(db, 'sessions', sessionCode), {
       party: next,
@@ -1109,10 +1309,10 @@ export default function Overshare() {
     const picked = all.find(a => a.id === answerId);
     if (!picked) return;
 
-    const scores = { ...(party.scores || {}) };
     const winnerPlayer = players.find(player => player.id === picked.by);
     if (!winnerPlayer) return;
-    scores[winnerPlayer.name] = (scores[winnerPlayer.name] || 0) + 1;
+    const roundScores = { [winnerPlayer.name]: 1 };
+    const scores = addRoundScores(party.scores || {}, roundScores);
     const winnerIndex = Math.max(0, players.findIndex(p => p.id === picked.by));
 
     // per-player alert (“your answer was picked”)
@@ -1127,6 +1327,7 @@ export default function Overshare() {
       state: 'reveal',
       winner: winnerPlayer.name,
       scores,
+      roundScores,
       nextTurnIndex: winnerIndex,
       round: (party.round || 1) + 1,
     };
@@ -1170,8 +1371,8 @@ export default function Overshare() {
         await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
       } else {
         const winner = sorted[0][0];
-        const scores = { ...(party.scores || {}) };
-        scores[winner] = (scores[winner] || 0) + 1;
+        const roundScores = { [winner]: 1 };
+        const scores = addRoundScores(party.scores || {}, roundScores);
         const winnerIndex = Math.max(0, players.findIndex(p => p.name === winner));
 
         // alert winner, and optionally voters who picked winner
@@ -1192,6 +1393,7 @@ export default function Overshare() {
           state: 'reveal',
           winner,
           scores,
+          roundScores,
           nextTurnIndex: winnerIndex,
           round: (party.round || 1) + 1,
         };
@@ -1221,7 +1423,7 @@ export default function Overshare() {
 const hostSubmitNhiGuesses = async (guessesMap) => {
   if (!sessionCode || !party) return;
   const actual = party.nhiAnswers || {};
-  const scores = { ...(party.scores || {}) };
+  const roundScores = {};
   let hostPoints = 0;
 
   // Use for...of so we can use await safely inside the loop
@@ -1233,7 +1435,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     if (correct) {
       hostPoints += 1;
       const participant = players.find(player => player.id === uid);
-      if (participant) scores[participant.name] = (scores[participant.name] || 0) + 1;
+      if (participant) roundScores[participant.name] = (roundScores[participant.name] || 0) + 1;
 
       if (typeof pushAlert === 'function') {
         try {
@@ -1251,7 +1453,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
 
   const owner = players[party.turnIndex]?.name;
   if (owner) {
-    scores[owner] = (scores[owner] || 0) + hostPoints;
+    roundScores[owner] = (roundScores[owner] || 0) + hostPoints;
     if (typeof pushAlert === 'function') {
       try {
         const ownerUid = uidForName(owner);
@@ -1266,17 +1468,105 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   }
 
   const nextTurn = (party.turnIndex + 1) % (players.length || 1);
+  const scores = addRoundScores(party.scores || {}, roundScores);
   const next = {
     ...party,
     state: 'reveal',
     winner: null,
     guesses: guessesMap,
     scores,
+    roundScores,
     nextTurnIndex: nextTurn,
     round: (party.round || 1) + 1,
   };
   await updateDoc(doc(db, 'sessions', sessionCode), { party: next });
 };
+
+  const submitChoiceVote = async choice => {
+    if (!sessionCode || !party || !playerId) return;
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.choiceVotes.${playerId}`]: choice });
+  };
+
+  useEffect(() => {
+    if (!isHost || !sessionCode || party?.state !== 'vote_choice') return;
+    const votes = party.choiceVotes || {};
+    if (!players.length || !players.every(player => votes[player.id] !== undefined)) return;
+    const namedVotes = Object.fromEntries(players.map(player => [player.name, votes[player.id]]));
+    const roundScores = scoreMajorityVotes(namedVotes);
+    const next = {
+      ...party,
+      state: 'reveal',
+      winner: null,
+      roundScores,
+      scores: addRoundScores(party.scores || {}, roundScores),
+      nextTurnIndex: (party.turnIndex + 1) % players.length,
+      round: (party.round || 1) + 1,
+    };
+    updateDoc(doc(db, 'sessions', sessionCode), { party: next }).catch(() => {});
+  }, [isHost, party, players, sessionCode]);
+
+  const submitOwnerAnswer = async choice => {
+    if (!sessionCode || !party || players[party.turnIndex]?.id !== playerId) return;
+    await updateDoc(doc(db, 'sessions', sessionCode), {
+      'party.ownerAnswer': choice,
+      'party.state': 'guess_owner',
+    });
+  };
+
+  const submitOwnerGuess = async choice => {
+    if (!sessionCode || !party || players[party.turnIndex]?.id === playerId) return;
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.ownerGuesses.${playerId}`]: choice });
+  };
+
+  useEffect(() => {
+    if (!isHost || !sessionCode || party?.state !== 'guess_owner' || !party.ownerAnswer) return;
+    const guessers = players.filter(player => player.id !== players[party.turnIndex]?.id);
+    if (!guessers.length || !guessers.every(player => party.ownerGuesses?.[player.id] !== undefined)) return;
+    const namedGuesses = Object.fromEntries(guessers.map(player => [player.name, party.ownerGuesses[player.id]]));
+    const roundScores = scoreCorrectGuesses(namedGuesses, party.ownerAnswer);
+    const next = {
+      ...party,
+      state: 'reveal',
+      roundScores,
+      scores: addRoundScores(party.scores || {}, roundScores),
+      nextTurnIndex: (party.turnIndex + 1) % players.length,
+      round: (party.round || 1) + 1,
+    };
+    updateDoc(doc(db, 'sessions', sessionCode), { party: next }).catch(() => {});
+  }, [isHost, party, players, sessionCode]);
+
+  const submitAnonymousAnswer = async answer => {
+    if (!sessionCode || !party || party.submissions?.[playerId]?.length) return;
+    const item = { id: crypto.randomUUID(), by: playerId, text: answer.trim() };
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.submissions.${playerId}`]: [item] });
+  };
+
+  const startAnonymousGuessing = async () => {
+    if (!sessionCode || !party || (!isHost && players[party.turnIndex]?.id !== playerId)) return;
+    await updateDoc(doc(db, 'sessions', sessionCode), { 'party.state': 'guess_anonymous' });
+  };
+
+  const submitAnonymousGuesses = async guesses => {
+    if (!sessionCode || !party) return;
+    await updateDoc(doc(db, 'sessions', sessionCode), { [`party.anonymousGuesses.${playerId}`]: guesses });
+  };
+
+  useEffect(() => {
+    if (!isHost || !sessionCode || party?.state !== 'guess_anonymous') return;
+    if (!players.length || !players.every(player => party.anonymousGuesses?.[player.id] !== undefined)) return;
+    const submissions = Object.values(party.submissions || {}).flat();
+    const namedGuesses = Object.fromEntries(players.map(player => [player.name, party.anonymousGuesses[player.id]]));
+    const roundScores = scoreAnonymousGuesses(namedGuesses, submissions);
+    const next = {
+      ...party,
+      state: 'reveal',
+      roundScores,
+      scores: addRoundScores(party.scores || {}, roundScores),
+      nextTurnIndex: (party.turnIndex + 1) % players.length,
+      round: (party.round || 1) + 1,
+    };
+    updateDoc(doc(db, 'sessions', sessionCode), { party: next }).catch(() => {});
+  }, [isHost, party, players, sessionCode]);
 
 
   /* =========================
@@ -1425,7 +1715,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   };
 
   const CategoryChip = ({ categoryKey }) => {
-    const category = CATEGORIES[categoryKey];
+    const category = TOPICS[categoryKey];
     const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
     return (
       <div className={`inline-flex items-center space-x-2 px-3 py-2 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'} text-white text-sm`}>
@@ -1481,43 +1771,17 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             </div>
             <span className="overshare-kicker block mb-3">Conversation, remixed</span>
             <h1 className="overshare-display mb-4">Overshare</h1>
-            <p className="text-lg text-gray-600 dark:text-gray-300 leading-relaxed">Questions matched to your people, your mood, and the time you have.</p>
-          </div>
-
-          <div className="mb-6">
-            <input
-              type="text"
-              placeholder="Enter your name"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              className="overshare-input text-center text-lg"
-            />
+            <p className="text-lg text-gray-600 dark:text-gray-300 leading-relaxed">The right question for the people actually in the room.</p>
           </div>
 
           <button
-            onClick={() => { if (!playerName.trim()) return; persistProfile(); setGameState('preferences'); try { playSound('click'); } catch {} }}
-            disabled={!playerName.trim()}
-            className="overshare-button-primary w-full text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => { setGameState('modeSelect'); try { playSound('click'); } catch {} }}
+            className="overshare-button-primary w-full text-lg"
           >
-            Let’s Get Started
+            Choose how to play
           </button>
         </main>
       </div>
-    );
-  }
-
-  if (gameState === 'preferences') {
-    return (
-      <PreferenceQuestionnaire
-        initialValue={preferences}
-        onBack={() => setGameState('welcome')}
-        onComplete={(nextPreferences) => {
-          setPreferences(nextPreferences);
-          persistProfile(nextPreferences);
-          setGameState('modeSelect');
-          try { playSound('success'); } catch {}
-        }}
-      />
     );
   }
 
@@ -1530,22 +1794,23 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
         <NotificationToast />
         <main className="overshare-panel p-7 sm:p-8 max-w-md w-full text-center">
           <span className="overshare-kicker block mb-3">Choose your format</span>
-          <h2 className="text-3xl font-black tracking-tight mb-7">How do you want to play, {playerName}?</h2>
+          <h2 className="text-3xl font-black tracking-tight mb-2">How is everyone playing?</h2>
+          <p className="text-gray-600 dark:text-gray-300 mb-7">Quickplay stays on this device. Rooms keep everyone in sync.</p>
 
           <div className="space-y-4">
             <button
-              onClick={() => { setAppMode('solo'); setGameState('soloSetup'); try { playSound('click'); } catch {} }}
+              onClick={() => { setAppMode('quickplay'); setGameState('quickExperienceSelect'); try { playSound('click'); } catch {} }}
               className="overshare-mode-card w-full bg-white/80 dark:bg-white/5 text-purple-700 dark:text-purple-200 font-extrabold text-lg"
             >
-              Solo Quickstart (one device)
+              Quickplay · One device
             </button>
 
             <button
-              onClick={() => { setAppMode('multi'); setGameState('createOrJoin'); try { playSound('click'); } catch {} }}
+              onClick={() => { setAppMode('multi'); setGameState('playerSetup'); try { playSound('click'); } catch {} }}
               className="overshare-button-primary w-full text-lg flex items-center justify-center"
             >
               <Users className="w-5 h-5 mr-2" />
-              Multiplayer
+              Everyone uses a device
             </button>
           </div>
         </main>
@@ -1553,81 +1818,65 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     );
   }
 
-  // Solo setup
-  if (gameState === 'soloSetup') {
-    const entries = Object.entries(CATEGORIES || {});
+  if (gameState === 'playerSetup') {
     return (
       <div className={`min-h-screen ${bgClass} overshare-app-shell flex items-center justify-center p-4`}>
         <TopBar />
-        <NotificationToast />
-        <main className="overshare-panel p-7 sm:p-8 max-w-md w-full">
-          <h2 className="text-2xl font-bold mb-4">Pick your categories</h2>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">Use your library. You can skip questions you don’t like.</p>
-          <div className="space-y-3 mb-6">
-            {entries.map(([key, category]) => {
-              const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
-              const selected = soloCategories.includes(key);
-              return (
-                <button
-                  key={key}
-                  onClick={() => {
-                    setSoloCategories(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
-                    try { playSound('click'); } catch {}
-                  }}
-                  className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
-                    selected ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-600 hover:border-purple-300'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r ${category?.color || 'from-gray-400 to-gray-500'}`}>
-                      <IconComponent className="w-4 h-4 text-white" />
-                    </div>
-                    <div>
-                      <div className="font-semibold">{category?.name || key}</div>
-                      <div className="text-sm text-gray-600 dark:text-gray-300">{category?.description || ''}</div>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={() => {
-              if (soloCategories.length === 0) return;
-              setGameState('soloPlay');
-              try { playSound('success'); } catch {}
-              const firstCat = soloCategories[0];
-              const q = getQuestion(firstCat, []);
-              setCurrentCategory(firstCat);
-              setCurrentQuestion(q);
-              setSoloAsked([q]);
-              setSoloSkipsUsed(0);
-            }}
-            disabled={soloCategories.length === 0}
-            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50"
-          >
-            Start Solo
-          </button>
-
-          <button
-            onClick={() => setGameState('modeSelect')}
-            className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
-          >
-            Back
-          </button>
+        <main className="overshare-panel p-7 sm:p-8 max-w-md w-full text-center">
+          <span className="overshare-kicker">Your player card</span>
+          <h2 className="text-3xl font-black tracking-tight mt-2 mb-2">What should we call you?</h2>
+          <p className="text-gray-600 dark:text-gray-300 mb-6">Your name is only used inside the room.</p>
+          <input type="text" placeholder="Enter your name" value={playerName} onChange={event => setPlayerName(event.target.value)} className="overshare-input text-center text-lg mb-4" />
+          <button type="button" disabled={!playerName.trim()} onClick={() => { persistProfile(); setGameState('createOrJoin'); }} className="overshare-button-primary w-full disabled:opacity-40">Continue</button>
+          <button type="button" onClick={() => setGameState('modeSelect')} className="overshare-button-secondary w-full mt-3">Back</button>
         </main>
       </div>
+    );
+  }
+
+  if (gameState === 'quickExperienceSelect') {
+    return (
+      <ExperiencePicker
+        experienceIds={QUICKPLAY_EXPERIENCES}
+        playerCount={2}
+        playFormat="quickplay"
+        onBack={() => setGameState('modeSelect')}
+        onSelect={selectedExperience => { setExperience(selectedExperience); setGameState('quickplaySetup'); }}
+        title="What kind of conversation?"
+      />
+    );
+  }
+
+  if (gameState === 'quickplaySetup' && experience) {
+    return (
+      <QuickplaySetup
+        experience={experience}
+        onBack={() => setGameState('quickExperienceSelect')}
+        onStart={config => {
+          const topics = config.topics;
+          const question = getQuestionRecord(topics[0], [], { experience, ...config, profile: config });
+          setQuickplayConfig(config);
+          setSoloCategories(topics);
+          setCurrentCategory(topics[0]);
+          setCurrentQuestion(question.text);
+          setCurrentQuestionId(question.id);
+          setSoloAsked([question.id]);
+          setSoloSkipsUsed(0);
+          setGameState('soloPlay');
+          try { playSound('success'); } catch {}
+        }}
+      />
     );
   }
 
   // Solo play (skip limited)
   if (gameState === 'soloPlay') {
     const changeCategory = (key) => {
-      const q = getQuestion(key, soloAsked);
+      const q = getQuestionRecord(key, soloAsked, { experience, ...quickplayConfig, profile: quickplayConfig });
       setCurrentCategory(key);
-      setCurrentQuestion(q);
-      setSoloAsked((prev) => [...prev, q]);
+      setCurrentQuestion(q.text);
+      setCurrentQuestionId(q.id);
+      setSoloAsked((prev) => [...prev, q.id]);
       setSoloSkipsUsed(0); // reset skips per category switch
     };
     const skipSolo = () => {
@@ -1635,9 +1884,10 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
         showNotification(`Skip limit reached (${soloMaxSkips}).`, '⏭️');
         return;
       }
-      const q = getQuestion(currentCategory, soloAsked);
-      setCurrentQuestion(q);
-      setSoloAsked((prev) => [...prev, q]);
+      const q = getQuestionRecord(currentCategory, soloAsked, { experience, ...quickplayConfig, profile: quickplayConfig });
+      setCurrentQuestion(q.text);
+      setCurrentQuestionId(q.id);
+      setSoloAsked((prev) => [...prev, q.id]);
       setSoloSkipsUsed(n => n + 1);
       try { playSound('click'); } catch {}
     };
@@ -1648,7 +1898,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
         <NotificationToast />
         <main className="overshare-panel p-7 sm:p-8 max-w-md w-full">
           <div className="mb-4">
-            <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">Category</div>
+            <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">Topic</div>
             <div className="flex flex-wrap gap-2">
               {soloCategories.map((key) => (
                 <button
@@ -1656,7 +1906,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
                   onClick={() => changeCategory(key)}
                   className={`px-3 py-1 rounded-lg border text-sm ${key === currentCategory ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-400 text-purple-700 dark:text-purple-200' : 'border-gray-300 dark:border-gray-600'}`}
                 >
-                  {CATEGORIES[key]?.name || key}
+                  {TOPICS[key]?.name || key}
                 </button>
               ))}
             </div>
@@ -1675,7 +1925,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               Skip
             </button>
             <button
-              onClick={() => { const q = getQuestion(currentCategory, soloAsked); setSoloAsked(p => [...p, q]); setCurrentQuestion(q); setSoloSkipsUsed(0); try { playSound('turn'); } catch {} }}
+              onClick={() => { const q = getQuestionRecord(currentCategory, soloAsked, { experience, ...quickplayConfig, profile: quickplayConfig }); setSoloAsked(p => [...p, q.id]); setCurrentQuestion(q.text); setCurrentQuestionId(q.id); setSoloSkipsUsed(0); try { playSound('turn'); } catch {} }}
               className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold hover:shadow-lg"
             >
               Next
@@ -1683,7 +1933,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           </div>
 
           <button
-            onClick={() => setGameState('modeSelect')}
+            onClick={() => setGameState('quickplaySetup')}
             className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 px-6 rounded-xl font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
           >
             Back
@@ -1786,12 +2036,9 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
                   await updateDoc(sessionRef, {
                     players: arrayUnion(newPlayer),
                     participantUids: arrayUnion(user.uid),
-                    [`preferencesReady.${user.uid}`]: true,
+                    [`preferencesReady.${user.uid}`]: false,
+                    [`relationshipsReady.${user.uid}`]: false,
                   });
-                  await setDoc(doc(db, 'sessions', sessionCode, 'privateProfiles', user.uid), {
-                    preferences,
-                    updatedAt: serverTimestamp(),
-                  }, { merge: true });
                   playerIdRef.current = user.uid;
                   setPlayerId(user.uid);
                   try { playSound('success'); } catch {}
@@ -1808,8 +2055,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
               onClick={async () => {
                 if (!sessionCode) return;
                 try { playSound('click'); } catch {}
-                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'relationshipSurvey' });
-                setGameState('relationshipSurvey');
+                await updateDoc(doc(db, 'sessions', sessionCode), { gameState: 'mpExperienceSelect' });
+                setGameState('mpExperienceSelect');
               }}
               disabled={players.length < 2}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-xl font-semibold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1826,6 +2073,47 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     );
   }
 
+  if (gameState === 'mpExperienceSelect') {
+    if (!isHost) {
+      return (
+        <div className="min-h-screen overshare-backdrop flex items-center justify-center p-4">
+          <main className="overshare-panel w-full max-w-md p-8 text-center">
+            <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
+            <h1 className="text-3xl font-extrabold tracking-tight mb-2">The host is choosing</h1>
+            <p className="text-gray-600 dark:text-gray-300">Your next setup screen will only ask what this experience needs.</p>
+          </main>
+        </div>
+      );
+    }
+    return (
+      <ExperiencePicker
+        experienceIds={MULTIPLAYER_EXPERIENCES}
+        playerCount={players.length}
+        playFormat="multi"
+        onBack={() => setGameState('waitingRoom')}
+        onSelect={async selectedExperience => {
+          setExperience(selectedExperience);
+          if (selectedExperience === 'party') {
+            await updateDoc(doc(db, 'sessions', sessionCode), { experience: selectedExperience });
+            await startPartyMode();
+            return;
+          }
+          const resetReadiness = Object.fromEntries(players.map(player => [player.id, false]));
+          await updateDoc(doc(db, 'sessions', sessionCode), {
+            experience: selectedExperience,
+            mode: 'classic',
+            gameState: 'relationshipSurvey',
+            relationshipsReady: resetReadiness,
+            preferencesReady: resetReadiness,
+            groupProfile: {},
+            categoryVotes: {},
+          });
+          setGameState('relationshipSurvey');
+        }}
+      />
+    );
+  }
+
   if (gameState === 'relationshipSurvey') {
     return (
       <RelationshipQuestionnaire
@@ -1837,17 +2125,28 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     );
   }
 
-  if (gameState === 'relationshipWaiting') {
-    const readyCount = players.filter(player => relationshipsReady[player.id]).length;
+  if (gameState === 'preferenceSurvey') {
+    return (
+      <PreferenceQuestionnaire
+        experience={experience || 'general'}
+        initialValue={preferences}
+        onBack={() => setGameState('relationshipSurvey')}
+        onComplete={saveMultiplayerPreferences}
+      />
+    );
+  }
+
+  if (gameState === 'conversationWaiting') {
+    const readyCount = players.filter(player => preferencesReady[player.id]).length;
     const everyoneReady = players.length > 0 && readyCount === players.length;
     return (
       <div className="min-h-screen overshare-backdrop flex items-center justify-center p-4">
         <main className="overshare-panel w-full max-w-md p-8 text-center">
           <Sparkles className="w-12 h-12 text-purple-500 mx-auto mb-4" />
-          <h1 className="text-3xl font-extrabold tracking-tight mb-2">Finding your sweet spot</h1>
-          <p className="text-gray-600 dark:text-gray-300 mb-6">{readyCount} of {players.length} players are ready. Individual answers stay private.</p>
+          <h1 className="text-3xl font-extrabold tracking-tight mb-2">Building the group mix</h1>
+          <p className="text-gray-600 dark:text-gray-300 mb-6">{readyCount} of {players.length} players are ready. Individual answers stay private; only a cautious group profile is shared.</p>
           {isHost && everyoneReady ? (
-            <button type="button" onClick={continueAfterRelationships} className="overshare-button-primary w-full">Choose a game</button>
+            <button type="button" onClick={startConversationVoting} className="overshare-button-primary w-full">Choose topics</button>
           ) : (
             <div className="h-2 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
               <div className="h-full overshare-gradient transition-all" style={{ width: `${players.length ? (readyCount / players.length) * 100 : 0}%` }} />
@@ -1858,69 +2157,12 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     );
   }
 
-  // Multiplayer mode select
-  if (gameState === 'mpModeSelect') {
-    const partyDisabled = players.length < 3;
-    return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
-        <TopBar />
-        <NotificationToast />
-        <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-          <h2 className="text-2xl font-bold mb-6">Choose a game mode</h2>
-
-          {isHost ? (
-            <div className="space-y-4">
-              <button
-                onClick={async () => {
-                  try { playSound('click'); } catch {}
-                  await updateDoc(doc(db, 'sessions', sessionCode), { mode: 'classic', gameState: 'categoryVoting', categoryVotes: {} });
-                  setMpMode('classic');
-                  setGameState('categoryVoting');
-                  setMySelectedCategories([]);
-                  setHasVotedCategories(false);
-                }}
-                className="w-full bg-white dark:bg-gray-900 border-2 border-purple-500 text-purple-600 dark:text-purple-300 py-4 px-6 rounded-xl font-semibold text-lg hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all"
-              >
-                Classic (conversation)
-              </button>
-
-              <button
-                onClick={async () => {
-                  if (partyDisabled) return;
-                  try { playSound('click'); } catch {}
-                  await startPartyMode();
-                }}
-                disabled={partyDisabled}
-                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all ${partyDisabled
-                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-400'
-                  : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:shadow-lg'
-                }`}
-              >
-                Party Mode (3+ players)
-              </button>
-              {partyDisabled && <p className="text-sm text-gray-500 dark:text-gray-300">Need at least 3 players for Party Mode.</p>}
-
-              <button
-                onClick={returnToLobby}
-                className="w-full mt-4 bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 py-3 rounded-xl font-semibold"
-              >
-                Return to Lobby
-              </button>
-            </div>
-          ) : (
-            <p className="text-gray-500 dark:text-gray-300">Waiting for host to select a mode…</p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   // Category voting (classic) — uses mySelectedCategories (local) so others' submits don’t clear your picks
   if (gameState === 'categoryVoting') {
-    const recommended = Object.keys(CATEGORIES).slice(0, 3);
+    const recommended = Object.keys(TOPICS).slice(0, 3);
     const allVotes = Object.values(categoryVotes || {});
     const totalVotes = allVotes.length;
-    const entries = Object.entries(CATEGORIES || {});
+    const entries = Object.entries(TOPICS || {});
 
     const CategoryCard = ({ categoryKey, category, isSelected, isRecommended, onClick, disabled = false }) => {
       const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
@@ -2047,7 +2289,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
   // Waiting for Host (classic)
   if (gameState === 'waitingForHost') {
     const topCategories = calculateTopCategories(categoryVotes || {});
-    const safeTop = topCategories.length ? topCategories : Object.keys(CATEGORIES).slice(0, 4);
+    const safeTop = topCategories.length ? topCategories : Object.keys(TOPICS).slice(0, 4);
     return (
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <TopBar />
@@ -2121,7 +2363,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           {isMyTurn ? (
             <div className="space-y-3">
               {(availableCategories || []).map((categoryKey) => {
-                const category = CATEGORIES[categoryKey];
+                const category = TOPICS[categoryKey];
                 const IconComponent = category && iconMap[category.icon] ? iconMap[category.icon] : MessageCircle;
                 return (
                   <button
@@ -2149,7 +2391,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           {(usedCategories || []).length > 0 && (
             <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-600">
               <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-2">Used:</h3>
-              <div className="flex flex-wrap gap-2">{usedCategories.map((k) => <span key={k} className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded-full">{CATEGORIES[k]?.name || k}</span>)}</div>
+              <div className="flex flex-wrap gap-2">{usedCategories.map((k) => <span key={k} className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded-full">{TOPICS[k]?.name || k}</span>)}</div>
             </div>
           )}
 
@@ -2168,7 +2410,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
 
   // Playing (classic)
   if (gameState === 'playing') {
-    const currentCategoryData = CATEGORIES[currentCategory] || null;
+    const currentCategoryData = TOPICS[currentCategory] || null;
     const IconComponent =
       currentCategoryData && iconMap[currentCategoryData.icon]
         ? iconMap[currentCategoryData.icon]
@@ -2282,9 +2524,9 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
                 <h3 className="text-xl font-semibold">Party Mode — How it works</h3>
               </div>
               <ul className="text-sm space-y-2">
-                <li>• Rounds rotate between <b>Fill-in-the-Blank</b>, <b>Superlatives</b>, and <b>Never Have I Ever</b>.</li>
+                <li>• Rounds rotate through nine games: creative answers, votes, predictions, anonymous reveals, and trivia.</li>
                 <li>• The current turn owner reads the prompt; others submit/vote.</li>
-                <li>• Points: winner gets +1. In NHI, correct guesses award points to both the host and players.</li>
+                <li>• Every result shows points earned that round and the running leaderboard.</li>
                 <li>• After results, only the <b>next owner</b> can start the next round.</li>
               </ul>
               <button
@@ -2346,6 +2588,42 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
     const turnOwnerId = players[party.turnIndex]?.id;
     const iAmTurnOwner = playerId === turnOwnerId;
 
+    if (party.state === 'vote_choice') {
+      return (
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}><TopBar /><NotificationToast />
+          <div className="overshare-panel p-8 max-w-md w-full">
+            <div className="flex items-center justify-between mb-3"><h2 className="text-2xl font-bold">{PARTY_GAME_DEFINITIONS[party.type]?.name}</h2><Scoreboard scores={party.scores || {}} inline /></div>
+            <ChoiceVoteView key={party.promptId} party={party} playerId={playerId} onSubmit={submitChoiceVote} />
+            <p className="text-center text-sm text-gray-500 mt-3">Choices: {Object.keys(party.choiceVotes || {}).length} / {players.length}</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (party.state === 'owner_answer' || party.state === 'guess_owner') {
+      const guessers = players.filter(player => player.id !== turnOwnerId);
+      return (
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}><TopBar /><NotificationToast />
+          <div className="overshare-panel p-8 max-w-md w-full">
+            <div className="flex items-center justify-between mb-3"><h2 className="text-2xl font-bold">{PARTY_GAME_DEFINITIONS[party.type]?.name}</h2><Scoreboard scores={party.scores || {}} inline /></div>
+            <OwnerChoiceView key={`${party.promptId}-${party.state}`} party={party} players={players} playerId={playerId} isTurnOwner={iAmTurnOwner} onOwnerAnswer={submitOwnerAnswer} onGuess={submitOwnerGuess} />
+            {party.state === 'guess_owner' && <p className="text-center text-sm text-gray-500 mt-3">Guesses: {Object.keys(party.ownerGuesses || {}).length} / {guessers.length}</p>}
+          </div>
+        </div>
+      );
+    }
+
+    if (party.state === 'collect_anonymous' || party.state === 'guess_anonymous') {
+      return (
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}><TopBar /><NotificationToast />
+          <div className="overshare-panel p-8 max-w-md w-full">
+            <div className="flex items-center justify-between mb-3"><h2 className="text-2xl font-bold">Anonymous Answers</h2><Scoreboard scores={party.scores || {}} inline /></div>
+            <AnonymousView key={`${party.promptId}-${party.state}`} party={party} players={players} playerId={playerId} canStartGuessing={isHost || iAmTurnOwner} onSubmit={submitAnonymousAnswer} onStartGuessing={startAnonymousGuessing} onSubmitGuesses={submitAnonymousGuesses} />
+          </div>
+        </div>
+      );
+    }
+
     // Fill
     if (party.state === 'collect_fill') {
       return (
@@ -2354,7 +2632,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           <NotificationToast />
           <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-2xl font-bold">Fill in the Blank</h2>
+              <h2 className="text-2xl font-bold">{PARTY_GAME_DEFINITIONS[party.type]?.name || 'Fill in the Blank'}</h2>
               <Scoreboard scores={party.scores || {}} inline />
             </div>
 
@@ -2401,7 +2679,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
           <NotificationToast />
           <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-2xl font-bold">Superlatives</h2>
+              <h2 className="text-2xl font-bold">Most Likely To</h2>
               <Scoreboard scores={party.scores || {}} inline />
             </div>
 
@@ -2560,6 +2838,7 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
             <p className="text-lg mb-2">Scores updated.</p>
           )}
 
+          <RoundScoreboard players={players} scores={party.roundScores || {}} />
           <Scoreboard scores={party.scores || {}} />
 
           <div className="mt-6">
