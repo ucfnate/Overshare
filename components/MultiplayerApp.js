@@ -40,6 +40,7 @@ import PreferenceQuestionnaire from '../components/PreferenceQuestionnaire';
 import RelationshipQuestionnaire from '../components/RelationshipQuestionnaire';
 import ExperiencePicker from '../components/ExperiencePicker';
 import QuickplaySetup from '../components/QuickplaySetup';
+import { CampfirePalettePicker } from '../components/CampfireAppearance';
 import { DEFAULT_PREFERENCES, normalizePreferences } from '../lib/preferences';
 import { MULTIPLAYER_EXPERIENCES, QUICKPLAY_EXPERIENCES } from '../lib/experiences';
 import {
@@ -72,11 +73,6 @@ const EXT_FILL = Array.isArray(fillInPrompts) ? fillInPrompts : [];
 // Remote-friendly filter (removes “on your left/right”, etc.)
 const remoteSafe = (s) => typeof s === 'string' && !/on your (left|right)/i.test(s);
 const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-function readStoredTheme() {
-  if (typeof window === 'undefined') return 'sunset';
-  try { return localStorage.getItem('bgTheme') || 'sunset'; } catch { return 'sunset'; }
-}
 
 function readStoredProfile() {
   if (typeof window === 'undefined') return null;
@@ -146,38 +142,9 @@ const RoundScoreboard = ({ players = [], scores = {} }) => (
 );
 
 function ThemePicker({ value, onChange }) {
-  const [open, setOpen] = useState(false);
   return (
-    <div className="fixed left-3 top-1/2 -translate-y-1/2 z-50">
-      <button
-        type="button"
-        onClick={() => setOpen(current => !current)}
-        className="px-3 py-2 rounded-full bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 shadow hover:bg-white"
-        title="Background theme"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        🎨
-      </button>
-
-      {open && (
-        <div className="mt-2 w-44 rounded-xl bg-white/90 dark:bg-gray-800/90 border border-gray-200 dark:border-gray-700 shadow-lg p-2">
-          <label className="block text-xs text-gray-500 dark:text-gray-300 mb-1" htmlFor="multiplayer-theme">Background</label>
-          <select
-            id="multiplayer-theme"
-            value={value}
-            onChange={(event) => { onChange(event.target.value); setOpen(false); }}
-            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-sm p-2"
-          >
-            <option value="sunset">Sunset</option>
-            <option value="ocean">Ocean</option>
-            <option value="dusk">Dusk</option>
-            <option value="vapor">Vapor</option>
-            <option value="slate">Slate</option>
-            <option value="plain">Plain</option>
-          </select>
-        </div>
-      )}
+    <div className="fixed left-3 top-3 z-50">
+      <CampfirePalettePicker compact value={value} onChange={onChange} />
     </div>
   );
 }
@@ -635,7 +602,7 @@ function AnonymousView({ party, players, playerId, canStartGuessing, onSubmit, o
 /* =========================================================
    Main Component
 ========================================================= */
-export default function MultiplayerApp({ onExit }) {
+export default function MultiplayerApp({ onExit, palette, onPaletteChange }) {
   /* High-level state */
   const [gameState, setGameState] = useState('playerSetup');
   const [playerName, setPlayerName] = useState(() => readStoredProfile()?.name || '');
@@ -687,18 +654,7 @@ export default function MultiplayerApp({ onExit }) {
   const [showScores, setShowScores] = useState(false);
   const [showReturnConfirmation, setShowReturnConfirmation] = useState(false);
 
-  // Background themes
-  const BG_THEMES = {
-    sunset: 'bg-gradient-to-br from-[#302044] via-[#70408b] to-[#c75278]',
-    ocean:  'bg-gradient-to-br from-[#12364a] via-[#176b77] to-[#39a58a]',
-    dusk:   'bg-gradient-to-br from-[#171b3d] via-[#41316f] to-[#8a3c77]',
-    vapor:  'bg-gradient-to-br from-[#733f67] via-[#a8567b] to-[#e48273]',
-    slate:  'bg-gradient-to-br from-[#111827] via-[#25283a] to-[#3d354c]',
-    plain:  'bg-[#eee8df] dark:bg-[#17121c]',
-  };
-  const [bgTheme, setBgTheme] = useState(readStoredTheme);
-  const bgClass = BG_THEMES[bgTheme] || BG_THEMES.sunset;
-  useEffect(() => { try { localStorage.setItem('bgTheme', bgTheme); } catch {} }, [bgTheme]);
+  const bgClass = 'overshare-backdrop';
 
   const persistProfile = useCallback((nextPreferences = preferences) => {
     try { localStorage.setItem('overshare-profile', JSON.stringify({ name: playerName.trim(), preferences: nextPreferences })); } catch {}
@@ -1737,8 +1693,8 @@ const hostSubmitNhiGuesses = async (guessesMap) => {
       audioEnabled={audioEnabled}
       onToggleAudio={() => { setAudioEnabled(current => !current); try { playSound('click'); } catch {} }}
       onShowHelp={() => setShowHelp(true)}
-      bgTheme={bgTheme}
-      onThemeChange={setBgTheme}
+      bgTheme={palette}
+      onThemeChange={onPaletteChange}
       showReturnConfirmation={showReturnConfirmation}
       onCancelReturn={() => setShowReturnConfirmation(false)}
       onConfirmReturn={confirmReturnToLobby}
