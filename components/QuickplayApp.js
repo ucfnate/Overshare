@@ -3,29 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ExperiencePicker from './ExperiencePicker'
 import QuickplaySetup from './QuickplaySetup'
+import { CampfirePalettePicker } from './CampfireAppearance'
 import { QUICKPLAY_EXPERIENCES } from '../lib/experiences'
 import { getTopicsForExperience, selectQuestion } from '../lib/questionEngine'
 
-const THEMES = {
-  sunset: 'bg-gradient-to-br from-[#302044] via-[#70408b] to-[#c75278]',
-  ocean: 'bg-gradient-to-br from-[#12364a] via-[#176b77] to-[#39a58a]',
-  dusk: 'bg-gradient-to-br from-[#171b3d] via-[#41316f] to-[#8a3c77]',
-  vapor: 'bg-gradient-to-br from-[#733f67] via-[#a8567b] to-[#e48273]',
-  slate: 'bg-gradient-to-br from-[#111827] via-[#25283a] to-[#3d354c]',
-  plain: 'bg-[#eee8df] dark:bg-[#17121c]',
-}
-
-function readStoredTheme() {
-  if (typeof window === 'undefined') return 'sunset'
-  try {
-    const saved = localStorage.getItem('bgTheme')
-    return saved && THEMES[saved] ? saved : 'sunset'
-  } catch {
-    return 'sunset'
-  }
-}
-
-function QuickplayChrome({ audioEnabled, onToggleAudio, theme, onThemeChange, showHelp, onToggleHelp }) {
+function QuickplayChrome({ audioEnabled, onToggleAudio, palette, onPaletteChange, showHelp, onToggleHelp }) {
   return (
     <>
       <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
@@ -34,11 +16,8 @@ function QuickplayChrome({ audioEnabled, onToggleAudio, theme, onThemeChange, sh
         </button>
         <button type="button" onClick={onToggleHelp} className="bg-white/20 dark:bg-white/10 backdrop-blur-sm text-white p-3 rounded-full" aria-label="Help">?</button>
       </div>
-      <div className="fixed left-3 top-1/2 -translate-y-1/2 z-50">
-        <label className="sr-only" htmlFor="quickplay-theme">Background theme</label>
-        <select id="quickplay-theme" value={theme} onChange={event => onThemeChange(event.target.value)} className="rounded-full bg-white/85 dark:bg-gray-800/85 border border-white/30 p-2 text-sm shadow">
-          {Object.keys(THEMES).map(value => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}
-        </select>
+      <div className="fixed left-3 top-3 z-50">
+        <CampfirePalettePicker compact value={palette} onChange={onPaletteChange} />
       </div>
       {showHelp && (
         <div className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4" role="presentation" onClick={event => { if (event.target === event.currentTarget) onToggleHelp() }}>
@@ -53,7 +32,7 @@ function QuickplayChrome({ audioEnabled, onToggleAudio, theme, onThemeChange, sh
   )
 }
 
-export default function QuickplayApp({ onExit }) {
+export default function QuickplayApp({ onExit, palette, onPaletteChange }) {
   const [screen, setScreen] = useState('experience')
   const [experience, setExperience] = useState(null)
   const [config, setConfig] = useState(null)
@@ -65,13 +44,8 @@ export default function QuickplayApp({ onExit }) {
   const [notification, setNotification] = useState('')
   const [audioEnabled, setAudioEnabled] = useState(true)
   const [showHelp, setShowHelp] = useState(false)
-  const [theme, setTheme] = useState(readStoredTheme)
   const audioRef = useRef(null)
   const topics = useMemo(() => getTopicsForExperience(experience || 'general'), [experience])
-
-  useEffect(() => {
-    try { localStorage.setItem('bgTheme', theme) } catch {}
-  }, [theme])
 
   useEffect(() => () => {
     try { audioRef.current?.close?.() } catch {}
@@ -146,21 +120,21 @@ export default function QuickplayApp({ onExit }) {
   }
 
   return (
-    <div className={`min-h-screen ${THEMES[theme] || THEMES.sunset} overshare-app-shell flex items-center justify-center p-4`}>
-      <QuickplayChrome audioEnabled={audioEnabled} onToggleAudio={() => setAudioEnabled(value => !value)} theme={theme} onThemeChange={setTheme} showHelp={showHelp} onToggleHelp={() => setShowHelp(value => !value)} />
-      {notification && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-xl bg-white dark:bg-gray-800 p-4 shadow-xl" role="status">{notification}</div>}
+    <div className="min-h-screen overshare-backdrop overshare-app-shell flex items-center justify-center p-4">
+      <QuickplayChrome audioEnabled={audioEnabled} onToggleAudio={() => setAudioEnabled(value => !value)} palette={palette} onPaletteChange={onPaletteChange} showHelp={showHelp} onToggleHelp={() => setShowHelp(value => !value)} />
+      {notification && <div className="overshare-panel fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-xl p-4 shadow-xl" role="status">{notification}</div>}
       <main className="overshare-panel p-7 sm:p-8 max-w-md w-full">
         <div className="mb-4">
           <div className="text-sm text-gray-600 dark:text-gray-300 mb-1">Topic</div>
           <div className="flex flex-wrap gap-2">
             {categories.map(key => (
-              <button key={key} type="button" onClick={() => { setSkips(0); nextQuestion(key) }} className={`px-3 py-1 rounded-lg border text-sm ${key === category ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-400 text-purple-700 dark:text-purple-200' : 'border-gray-300 dark:border-gray-600'}`}>
+              <button key={key} type="button" onClick={() => { setSkips(0); nextQuestion(key) }} className={`topic-pill ${key === category ? 'topic-pill-selected' : ''}`}>
                 {topics[key]?.label || key}
               </button>
             ))}
           </div>
         </div>
-        <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 p-6 rounded-2xl border-l-4 border-purple-500 dark:border-purple-400 mb-3">
+        <div className="campfire-question-card mb-3">
           <p className="text-lg leading-relaxed">{question?.text || 'Choose another topic to keep talking.'}</p>
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Skips: {skips}/3</p>

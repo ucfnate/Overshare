@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import { useEffect, useState } from 'react'
+import { CampfirePalettePicker, useCampfireAppearance } from './CampfireAppearance'
 
 const LoadingGame = () => (
   <div className="min-h-screen overshare-backdrop overshare-app-shell grid place-items-center p-4">
@@ -24,6 +25,7 @@ const MultiplayerApp = dynamic(() => import('./MultiplayerApp'), {
 
 export default function OvershareLauncher() {
   const [screen, setScreen] = useState('welcome')
+  const { palette, choosePalette } = useCampfireAppearance()
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -35,15 +37,20 @@ export default function OvershareLauncher() {
     return () => window.clearTimeout(timer)
   }, [])
 
-  if (screen === 'quickplay') return <QuickplayApp onExit={() => setScreen('format')} />
-  if (screen === 'multiplayer') return <MultiplayerApp onExit={() => setScreen('format')} />
+  if (screen === 'quickplay') {
+    return <QuickplayApp onExit={() => setScreen('format')} palette={palette} onPaletteChange={choosePalette} />
+  }
+  if (screen === 'multiplayer') {
+    return <MultiplayerApp onExit={() => setScreen('format')} palette={palette} onPaletteChange={choosePalette} />
+  }
 
   if (screen === 'format') {
     return (
       <div className="min-h-screen overshare-backdrop overshare-app-shell flex items-center justify-center p-4">
         <main className="overshare-panel p-7 sm:p-8 max-w-md w-full text-center">
+          <span className="campfire-wordmark inline-block mb-5">overshare</span>
           <span className="overshare-kicker block mb-3">Choose your format</span>
-          <h1 className="text-3xl font-black tracking-tight mb-2">How is everyone playing?</h1>
+          <h1 className="text-3xl font-black tracking-tight mb-2">How are you gathering?</h1>
           <p className="text-gray-600 dark:text-gray-300 mb-7">Quickplay stays on this device. Rooms keep everyone in sync.</p>
 
           <div className="space-y-4">
@@ -71,16 +78,20 @@ export default function OvershareLauncher() {
 
   return (
     <div className="min-h-screen overshare-backdrop overshare-app-shell flex items-center justify-center p-4">
-      <main className="overshare-panel p-7 sm:p-9 max-w-md w-full text-center">
-        <div className="mb-8">
-          <div className="overshare-brand-mark mb-6" aria-hidden="true">💬</div>
-          <span className="overshare-kicker block mb-3">Conversation, remixed</span>
-          <h1 className="overshare-display mb-4">Overshare</h1>
-          <p className="text-lg text-gray-600 dark:text-gray-300 leading-relaxed">The right question for the people actually in the room.</p>
-        </div>
+      <main className="overshare-panel campfire-welcome max-w-md w-full">
+        <header className="campfire-welcome-header">
+          <div className="campfire-wordmark">overshare</div>
+          <span className="overshare-kicker">Come closer</span>
+        </header>
+        <section className="campfire-hero">
+          <span className="overshare-kicker" style={{ color: 'inherit' }}>Tonight, be curious</span>
+          <h1 className="campfire-hero-copy">Good questions make people feel seen.</h1>
+        </section>
+        <CampfirePalettePicker value={palette} onChange={choosePalette} />
         <button type="button" onClick={() => setScreen('format')} className="overshare-button-primary w-full text-lg">
-          Choose how to play
+          Gather around
         </button>
+        <p className="campfire-muted mt-3 mb-1 text-center text-xs">Your colors stay on this device.</p>
       </main>
     </div>
   )
