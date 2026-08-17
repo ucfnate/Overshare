@@ -1,21 +1,26 @@
 'use client';
 
 import { useState } from 'react';
-import { DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, togglePreference } from '../lib/preferences';
+import { DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, normalizePreferences, togglePreference } from '../lib/preferences';
+import { getTopicsForExperience } from '../lib/questionEngine';
 
-const steps = [
+const baseSteps = [
   { key: 'depth', title: 'How deep should the questions go?', subtitle: 'Pick the level that feels right today.', multiple: false },
-  { key: 'energy', title: 'What energy sounds good?', subtitle: 'Choose as many as you like.', multiple: true },
-  { key: 'styles', title: 'What do you like talking about?', subtitle: 'We’ll favor the group’s shared picks.', multiple: true },
+  { key: 'styles', title: 'What do you want to talk about?', subtitle: 'We’ll build a mix from everyone’s interests.', multiple: true },
   { key: 'excludedTopics', title: 'Anything you want to avoid?', subtitle: 'Your boundaries stay private. Skipping everything is okay.', multiple: true },
-  { key: 'duration', title: 'How much time do you have?', subtitle: 'This helps us pace the session.', multiple: false },
 ];
 
-export default function PreferenceQuestionnaire({ initialValue = DEFAULT_PREFERENCES, onBack, onComplete }) {
+export default function PreferenceQuestionnaire({ experience = 'general', initialValue = DEFAULT_PREFERENCES, onBack, onComplete }) {
   const [stepIndex, setStepIndex] = useState(0);
-  const [value, setValue] = useState({ ...DEFAULT_PREFERENCES, ...initialValue });
+  const [value, setValue] = useState(normalizePreferences(initialValue));
+  const steps = experience === 'date'
+    ? [...baseSteps.slice(0, 1), { key: 'spice', title: 'How spicy should Date Night get?', subtitle: 'The shared session always uses the more cautious choice.', multiple: false }, ...baseSteps.slice(1)]
+    : baseSteps;
   const step = steps[stepIndex];
-  const options = PREFERENCE_OPTIONS[step.key];
+  const topics = getTopicsForExperience(experience);
+  const options = step.key === 'styles'
+    ? Object.entries(topics).map(([optionValue, option]) => ({ value: optionValue, label: option.label, description: option.description }))
+    : PREFERENCE_OPTIONS[step.key];
 
   const select = (option) => setValue(current => ({
     ...current,

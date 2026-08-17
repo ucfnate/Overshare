@@ -38,7 +38,7 @@ service cloud.firestore {
       return signedIn()
         && unexpired()
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['participantUids', 'players', 'preferencesReady'])
+          .hasOnly(['participantUids', 'players', 'preferencesReady', 'relationshipsReady'])
         && request.resource.data.participantUids
           == resource.data.participantUids.concat([request.auth.uid])
         && request.resource.data.players.size() == resource.data.players.size() + 1
@@ -46,7 +46,11 @@ service cloud.firestore {
         && request.resource.data.players[request.resource.data.players.size() - 1].isHost == false
         && request.resource.data.preferencesReady.diff(resource.data.preferencesReady)
           .affectedKeys().hasOnly([request.auth.uid])
-        && request.resource.data.preferencesReady[request.auth.uid] == true;
+        && request.resource.data.preferencesReady[request.auth.uid] is bool
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['relationshipsReady'])
+          || (request.resource.data.relationshipsReady.diff(resource.data.relationshipsReady)
+            .affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.relationshipsReady[request.auth.uid] == false));
     }
 
     function changesOwnMap(mapName) {
@@ -60,6 +64,15 @@ service cloud.firestore {
         && request.resource.data.party.diff(resource.data.party).affectedKeys().hasOnly([mapName])
         && request.resource.data.party[mapName].diff(resource.data.party[mapName])
           .affectedKeys().hasOnly([request.auth.uid]);
+    }
+
+    function submitsPrivatePreferences() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['preferencesReady', 'groupProfile'])
+        && request.resource.data.preferencesReady.diff(resource.data.preferencesReady)
+          .affectedKeys().hasOnly([request.auth.uid])
+        && resource.data.preferencesReady[request.auth.uid] == false
+        && request.resource.data.preferencesReady[request.auth.uid] == true;
     }
 
     function isCurrentClassicPlayer() {
@@ -78,14 +91,18 @@ service cloud.firestore {
     function participantUpdate() {
       return immutableRoomFields() && (
         changesOwnMap('relationshipsReady')
+        || submitsPrivatePreferences()
         || changesOwnMap('categoryVotes')
         || changesOwnPartyMap('submissions')
         || changesOwnPartyMap('done')
         || changesOwnPartyMap('votes')
         || changesOwnPartyMap('nhiAnswers')
+        || changesOwnPartyMap('choiceVotes')
+        || changesOwnPartyMap('ownerGuesses')
+        || changesOwnPartyMap('anonymousGuesses')
         || (isCurrentClassicPlayer()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'gameState', 'currentTurnIndex', 'currentQuestion', 'currentCategory',
+            'gameState', 'currentTurnIndex', 'currentQuestion', 'currentQuestionId', 'currentCategory',
             'currentQuestionAsker', 'availableCategories', 'usedCategories', 'turnHistory'
           ]))
         || (isCurrentPartyOwner()
